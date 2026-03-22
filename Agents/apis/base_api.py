@@ -10,7 +10,7 @@ class BaseAgentAPI(ABC):
         self.agent = agent
     
     @abstractmethod
-    def search(self, query: str) -> Dict[str, Any]:
+    def search(self, query: str, use_llm: bool = True, top_k: int = 5) -> Dict[str, Any]:
         """Search method."""
         pass
     

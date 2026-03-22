@@ -13,9 +13,10 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 CHROMA_DB_DIR.mkdir(parents=True, exist_ok=True)
 
 # LLM Configuration
-LLM_SERVER_URL = os.getenv("LLM_SERVER", "https://medium-helps-justin-hub.trycloudflare.com")
+LLM_SERVER_URL = os.getenv("LLM_SERVER", "http://localhost:1234")
 LLM_API_ENDPOINT = f"{LLM_SERVER_URL}/v1/chat/completions"
 LLM_MODEL = "local-model"
+LLM_TIMEOUT = 10  # seconds
 
 # ChromaDB Configuration
 CHROMA_COLLECTION_PREFIX = "semantic_search"

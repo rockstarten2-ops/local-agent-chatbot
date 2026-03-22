@@ -5,8 +5,16 @@ from datetime import datetime
 from pathlib import Path
 
 # Configuration
-LLM_SERVER_URL = "https://medium-helps-justin-hub.trycloudflare.com"
-BACKEND_API_URL = "https://cube-ringtones-night-money.trycloudflare.com/api/agents"
+LLM_SERVER_URL = "http://localhost:1234"
+BACKEND_API_URL = "http://localhost:8000/api/agents"
+
+# Initialize session state FIRST - required by Streamlit before page config
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "agents" not in st.session_state:
+    st.session_state.agents = {}
+if "files_processed" not in st.session_state:
+    st.session_state.files_processed = []
 
 # Helper function
 def generate_llm_response(query: str, context: str) -> str:
@@ -42,6 +50,15 @@ Answer:"""
     except Exception as e:
         return f"⚠️ Could not generate AI response: {str(e)}"
 
+def should_search_documents(query: str, loaded_documents: dict) -> bool:
+    """Check if query should search documents. Always search when documents are loaded."""
+    if not loaded_documents:
+        return False
+    
+    # Simply return True if we have documents - let the semantic search 
+    # and LLM decide relevance based on similarity scores
+    return True
+
 # Page configuration
 st.set_page_config(
     page_title="AI Chat with Document Search",
@@ -68,14 +85,6 @@ st.markdown("""
     }
     </style>
 """, unsafe_allow_html=True)
-
-# Initialize session state
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-if "agents" not in st.session_state:
-    st.session_state.agents = {}
-if "files_processed" not in st.session_state:
-    st.session_state.files_processed = []
 
 # Page Title
 st.title("💬 AI Chat Assistant")
@@ -132,7 +141,7 @@ uploaded_file = st.file_uploader(
     "Select a file to analyze",
     type=["txt", "pdf", "csv", "json", "md"],
     label_visibility="collapsed",
-    key=f"uploader_{len(st.session_state.messages)}"
+    key="file_uploader"
 )
 
 if uploaded_file is not None:
@@ -140,7 +149,7 @@ if uploaded_file is not None:
     with col_upload_status:
         st.info(f"📄 Ready to upload: **{uploaded_file.name}**")
     with col_upload_action:
-        if st.button("Upload", key=f"upload_btn_{id(uploaded_file)}"):
+        if st.button("Upload", key="upload_button"):
             # Process file upload
             with st.spinner("🔄 Processing file..."):
                 try:
@@ -269,6 +278,7 @@ if user_input:
                         ])
                         
                         response_text = generate_llm_response(user_input, context)
+                        
                         st.markdown(response_text)
                         
                         # Show retrieved documents in dropdown with better formatting
@@ -283,10 +293,10 @@ if user_input:
                                     st.markdown(f"**{i}. {result['document']}**")
                                     st.caption(f"🎯 Relevance: {result['similarity']:.1%}")
                                 with col_score:
-                                    st.metric("", f"{result['similarity']:.0%}")
+                                    st.metric("Score", f"{result['similarity']:.0%}", label_visibility="collapsed")
                                 
                                 # Content preview with expander
-                                with st.expander("📋 View content", key=f"chunk_{i}"):
+                                with st.expander("📋 View content"):
                                     st.markdown(result['content'])
                                     if result['metadata']:
                                         st.divider()
@@ -296,6 +306,7 @@ if user_input:
                                 st.divider()
                     else:
                         response_text = "❓ No relevant information found in loaded documents."
+                        
                         st.error(response_text)
                         
                         # Show debug info in expander
@@ -313,9 +324,10 @@ if user_input:
                             ]
                             for tip in tips:
                                 st.write(tip)
-                    
+                
                 except Exception as e:
                     response_text = f"⚠️ Search error: {str(e)}"
+                    
                     st.error(response_text)
                     
                     with st.expander("📋 Error Details"):

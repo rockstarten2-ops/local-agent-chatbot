@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Document Assistant</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-content">
+                <h1>📚 AI Document Assistant</h1>
+                <p>Chat with your documents using intelligent agents</p>
+            </div>
+        </header>
+
+        <main class="main-content">
+            <!-- Sidebar: Documents -->
+            <aside class="sidebar">
+                <h2>📁 Loaded Documents</h2>
+                <div id="documents-list" class="documents-list">
+                    <p class="empty-state">No documents uploaded yet</p>
+                </div>
+                <!-- Agent Status Display -->
+                <div id="agent-status" class="agent-status" style="display: none;">
+                    <div class="agent-badge">
+                        <span id="agent-icon" class="agent-icon">🤖</span>
+                        <div class="agent-info">
+                            <p id="agent-name" class="agent-name">Agent</p>
+                            <p id="agent-action" class="agent-action">Processing...</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Processing Animation -->
+                <div id="processing-animation" class="processing-animation" style="display: none;">
+                    <div class="processing-item">
+                        <div class="processing-spinner"></div>
+                        <p id="processing-text">Processing...</p>
+                    </div>
+                </div>
+
+                <!-- Document Processing List -->
+                <div id="document-processing-list" class="document-processing-list" style="display: none;">
+                    <p class="processing-label">Documents being processed:</p>
+                    <div id="processing-docs" class="processing-docs"></div>
+                </div>
+                <button class="btn btn-primary btn-block" id="clear-all-btn" style="display: none;">
+                    🗑️ Clear All
+                </button>
+            </aside>
+
+            <!-- Main Chat Area -->
+            <section class="chat-section">
+                <!-- Chat Messages -->
+                <div id="chat-messages" class="chat-messages">
+                    <div class="chat-message assistant">
+                        <div class="message-avatar">🤖</div>
+                        <div class="message-content">
+                            <p>👋 Welcome! I'm your AI Document Assistant. I can help you:</p>
+                            <ul>
+                                <li><strong>Upload documents</strong> - PDFs, TXT, CSV, JSON, Markdown</li>
+                                <li><strong>Summarize</strong> - Get quick overviews of your documents</li>
+                                <li><strong>Search</strong> - Find specific information</li>
+                                <li><strong>Answer questions</strong> - Ask anything about your documents</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Agent Processing Indicator -->
+                <div id="agent-processing-indicator" class="agent-processing-indicator" style="display: none;">
+                    <div class="indicator-content">
+                        <div class="indicator-spinner"></div>
+                        <div class="indicator-text">
+                            <p id="indicator-agent">Agent: General LLM</p>
+                            <p id="indicator-action" class="action-text">Processing your request...</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- File Upload -->
+                <div class="upload-section">
+                    <h3>📤 Upload Documents</h3>
+                    <div class="upload-area" id="upload-area">
+                        <input type="file" id="file-input" multiple accept=".txt,.pdf,.csv,.json,.md" hidden>
+                        <p>Drag files here or <a href="#" onclick="document.getElementById('file-input').click(); return false;">browse</a></p>
+                        <small>Supported: PDF, TXT, CSV, JSON, Markdown</small>
+                    </div>
+                    <div id="upload-progress" style="display: none;">
+                        <p id="upload-status">Uploading...</p>
+                        <div class="progress-bar">
+                            <div id="progress-fill" class="progress-fill"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Input Area -->
+                <div class="input-section">
+                    <div class="input-wrapper">
+                        <textarea
+                            id="chat-input"
+                            class="chat-input"
+                            placeholder="Ask me anything about your documents..."
+                            rows="1"
+                        ></textarea>
+                        <button id="send-btn" class="btn btn-send" title="Send message (Ctrl+Enter)">
+                            ➤
+                        </button>
+                    </div>
+                    <small class="help-text">💡 Tip: Can summarize documents, search for topics, or answer general questions</small>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Modal for displaying detailed content -->
+    <div id="content-modal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <button class="modal-close" onclick="closeModal()">&times;</button>
+            <div id="modal-body"></div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>

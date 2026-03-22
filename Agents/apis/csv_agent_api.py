@@ -5,12 +5,12 @@ from Agents.apis.base_api import BaseAgentAPI
 class CSVAgentAPI(BaseAgentAPI):
     """API for CSV data agents."""
     
-    def search(self, query: str, use_llm: bool = True) -> Dict[str, Any]:
+    def search(self, query: str, use_llm: bool = True, top_k: int = 10) -> Dict[str, Any]:
         """Search in CSV data."""
         if use_llm:
-            return self.agent.search_with_llm_response(query, top_k=10)
+            return self.agent.search_with_llm_response(query, top_k=top_k)
         else:
-            return self.agent.search(query, top_k=10)
+            return self.agent.search(query, top_k=top_k)
     
     def get_info(self) -> Dict[str, Any]:
         """Get CSV agent information."""
