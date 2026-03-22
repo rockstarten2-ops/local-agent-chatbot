@@ -23,18 +23,18 @@ class SemanticSearchAgent:
         
         # Format results
         formatted_results = []
-        if results and results['documents']:
+        if results and results.get('documents') and results['documents'][0]:
             for i, (doc, distance) in enumerate(zip(results['documents'][0], results['distances'][0])):
                 formatted_results.append({
                     "rank": i + 1,
                     "content": doc,
                     "similarity": 1 - distance,  # Convert distance to similarity
-                    "metadata": results['metadatas'][0][i] if results['metadatas'] else {}
+                    "metadata": results['metadatas'][0][i] if results.get('metadatas') else {}
                 })
         
         return {
             "query": query,
-            "results": formatted_results,
+            "search_results": formatted_results,  # Changed from "results" to "search_results"
             "total_results": len(formatted_results)
         }
     
@@ -45,7 +45,7 @@ class SemanticSearchAgent:
         # Build context from search results
         context = "\n".join([
             f"Source {i+1}: {result['content']}"
-            for i, result in enumerate(search_results['results'])
+            for i, result in enumerate(search_results['search_results'])
         ])
         
         # Generate LLM response
@@ -53,9 +53,9 @@ class SemanticSearchAgent:
         
         return {
             "query": query,
-            "search_results": search_results['results'],
+            "search_results": search_results['search_results'],
             "llm_response": llm_response,
-            "total_sources": len(search_results['results'])
+            "total_sources": len(search_results['search_results'])
         }
     
     @staticmethod
