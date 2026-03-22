@@ -6,16 +6,17 @@ from Agents.config import CHROMA_DB_DIR, CHROMA_COLLECTION_PREFIX
 import hashlib
 
 class ChromaVectorStore:
-    """Manages ChromaDB for semantic search."""
+    """Manages ChromaDB for semantic search with persistent local storage."""
     
     def __init__(self):
-        """Initialize ChromaDB client."""
-        settings = Settings(
-            chroma_db_impl="duckdb+parquet",
-            persist_directory=str(CHROMA_DB_DIR),
-            anonymized_telemetry=False,
+        """Initialize ChromaDB client with persistent storage."""
+        # Ensure directory exists
+        CHROMA_DB_DIR.mkdir(parents=True, exist_ok=True)
+        
+        # Create persistent client
+        self.client = chromadb.PersistentClient(
+            path=str(CHROMA_DB_DIR)
         )
-        self.client = chromadb.Client(settings)
         self.collections = {}
     
     def get_or_create_collection(self, collection_name: str) -> Any:

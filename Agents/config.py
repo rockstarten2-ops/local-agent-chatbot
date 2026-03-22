@@ -20,6 +20,7 @@ LLM_MODEL = "local-model"
 # ChromaDB Configuration
 CHROMA_COLLECTION_PREFIX = "semantic_search"
 CHROMA_EMBEDDING_MODEL = "all-MiniLM-L6-v2"  # Lightweight embedding model
+CHROMA_PERSIST_DIR = str(CHROMA_DB_DIR)  # Persistent local file
 
 # File Processing Configuration
 SUPPORTED_FILE_TYPES = {
