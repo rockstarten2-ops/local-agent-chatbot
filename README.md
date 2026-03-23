@@ -6,11 +6,13 @@ A comprehensive multi-agent system with ChromaDB vector store for semantic docum
 
 This system provides:
 - **Multi-Agent Architecture**: Different specialized agents for different file types
+- **Query Router Modes**: All-doc summary, single-doc summary, chapter summary, and retrieval fallback
 - **Semantic Search**: Vector-based search using ChromaDB with sentence-transformers
 - **LLM Integration**: Question answering using your local LLM Studio server
+- **Realtime Trace Streaming**: SSE timeline of routing and agent execution flow
 - **File Upload Interface**: Easy upload and management of documents
 - **REST API**: FastAPI backend for programmatic access
-- **Streamlit UI**: Interactive web interface for document search
+- **Vanilla Web UI + Streamlit UI**: Two client options
 
 ## 📁 Project Structure
 
@@ -53,12 +55,22 @@ local-agent-chatbot/
 pip install -r requirements.txt
 ```
 
-### 2. Set LLM Server URL (Optional)
+### 2. Configure LM Studio / Qwen
 
-The default is configured for the provided LM Studio server. To use a different server:
+Start LM Studio's local server and load your model (for example `qwen-3.5-vl-9b`) first.
+
+Set environment variables before starting the app:
 
 ```bash
-export LLM_SERVER="https://your-lm-studio-url"
+# macOS/Linux
+export LLM_SERVER="http://localhost:1234"
+export LLM_MODEL="qwen-3.5-vl-9b"
+```
+
+```powershell
+# Windows PowerShell
+$env:LLM_SERVER="http://localhost:1234"
+$env:LLM_MODEL="qwen-3.5-vl-9b"
 ```
 
 ### 3. Start the Backend API
@@ -72,7 +84,16 @@ python -m uvicorn backend:app --reload --host 0.0.0.0 --port 8000
 The API will be available at: http://localhost:8000
 - API Docs: http://localhost:8000/docs
 
-### 4. Start the Streamlit UI
+### 4. Open the Vanilla Web UI (recommended)
+
+Open `http://localhost:8000/static/index.html` in your browser.
+
+This UI now includes:
+- live SSE routing timeline,
+- selected route badge,
+- persisted query history.
+
+### 5. Optional: Start the Streamlit UI
 
 In terminal 2:
 
@@ -80,7 +101,7 @@ In terminal 2:
 streamlit run streamlit_app.py
 ```
 
-The UI will be available at: http://localhost:8501
+The Streamlit UI will be available at: http://localhost:8501
 
 ## 📄 Supported File Types
 
@@ -124,6 +145,9 @@ The UI will be available at: http://localhost:8501
 
 - `POST /api/agents/search/{collection_name}` - Search with specific agent
   - Body: `{"query": "string", "use_llm": bool, "top_k": int}`
+- `POST /api/agents/query` - Multi-agent query (JSON response)
+- `POST /api/agents/query/stream` - Multi-agent query (SSE realtime events)
+- `GET /api/agents/history` - Recent multi-agent traces and outputs
 
 ### System
 
@@ -181,19 +205,14 @@ curl -X POST "http://localhost:8000/api/agents/search/semantic_search_pdf_docume
 
 ## 🛠️ Configuration
 
-Edit `Agents/config.py` to customize:
+Set these environment variables to customize runtime configuration:
 
-```python
-# Chunk Configuration
-CHUNK_SIZE = 500           # Size of text chunks
-CHUNK_OVERLAP = 50         # Overlap between chunks
-
-# ChromaDB Configuration
-CHROMA_EMBEDDING_MODEL = "all-MiniLM-L6-v2"  # Embedding model
-
-# LLM Configuration
-LLM_SERVER_URL = "your-url"
-LLM_MODEL = "local-model"
+```bash
+LLM_SERVER=http://localhost:1234
+LLM_MODEL=qwen-3.5-vl-9b
+BACKEND_API_URL=http://localhost:8000/api/agents  # Streamlit client only
+API_HOST=0.0.0.0
+API_PORT=8000
 ```
 
 ## 📊 Performance Tips

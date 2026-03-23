@@ -2,7 +2,8 @@
 import json
 import csv
 import io
-from typing import List, Tuple
+import re
+from typing import List, Tuple, Optional
 from pathlib import Path
 
 class DocumentParser:
@@ -128,3 +129,87 @@ class ParserFactory:
     def supported_types(cls) -> List[str]:
         """Get list of supported file types."""
         return list(cls.PARSERS.keys())
+
+
+def extract_chapter_targets(query: str) -> List[str]:
+    """Extract requested chapter/section targets from user query."""
+    query_lower = query.lower()
+    targets: List[str] = []
+
+    # Examples: "chapter 3", "chapters 1 and 2", "section 4.1"
+    chapter_matches = re.findall(r"(chapter|chapters)\s+([0-9]+(?:\s*(?:,|and)\s*[0-9]+)*)", query_lower)
+    for _, value in chapter_matches:
+        numbers = re.findall(r"[0-9]+", value)
+        targets.extend([f"chapter {number}" for number in numbers])
+
+    section_matches = re.findall(r"(section|sections)\s+([0-9]+(?:\.[0-9]+)*)", query_lower)
+    for _, value in section_matches:
+        targets.append(f"section {value}")
+
+    # Generic quoted section names.
+    quoted_matches = re.findall(r"['\"]([^'\"]{3,})['\"]", query)
+    for match in quoted_matches:
+        if "chapter" in query_lower or "section" in query_lower:
+            targets.append(match.strip())
+
+    seen = set()
+    deduped: List[str] = []
+    for target in targets:
+        normalized = target.lower().strip()
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            deduped.append(target.strip())
+    return deduped
+
+
+def find_best_document_match(query: str, document_names: List[str]) -> Optional[str]:
+    """Find best matching document name from query text."""
+    if not document_names:
+        return None
+
+    query_lower = query.lower()
+    best_name: Optional[str] = None
+    best_score = 0.0
+
+    for name in document_names:
+        full_name = name.lower()
+        stem = Path(name).stem.lower()
+
+        score = 0.0
+        if full_name in query_lower or stem in query_lower:
+            score = 1.0
+        else:
+            query_tokens = set(re.findall(r"[a-z0-9]+", query_lower))
+            stem_tokens = set(re.findall(r"[a-z0-9]+", stem))
+            if stem_tokens:
+                overlap = len(query_tokens & stem_tokens) / len(stem_tokens)
+                score = overlap
+
+        if score > best_score:
+            best_score = score
+            best_name = name
+
+    return best_name if best_score >= 0.45 else None
+
+
+def chunk_matches_chapter(chunk_content: str, chapter_targets: List[str]) -> bool:
+    """Check whether a chunk appears to belong to requested chapter targets."""
+    if not chapter_targets:
+        return True
+
+    chunk_lower = chunk_content.lower()
+    for target in chapter_targets:
+        target_lower = target.lower().strip()
+        if target_lower in chunk_lower:
+            return True
+
+        # chapter 3 should also match "chapter-3" or "chapter: 3"
+        if target_lower.startswith("chapter "):
+            number = target_lower.replace("chapter ", "").strip()
+            if re.search(rf"chapter[\s:\-]*{re.escape(number)}\b", chunk_lower):
+                return True
+        if target_lower.startswith("section "):
+            section_value = target_lower.replace("section ", "").strip()
+            if re.search(rf"section[\s:\-]*{re.escape(section_value)}\b", chunk_lower):
+                return True
+    return False

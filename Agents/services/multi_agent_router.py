@@ -1,130 +1,206 @@
 """Multi-agent routing and decision making service."""
+import re
 import requests
-from typing import Dict, Any, List, Optional
-from Agents.config import LLM_SERVER_URL
+from typing import Dict, Any, List
+from Agents.config import LLM_SERVER_URL, LLM_MODEL, LLM_TIMEOUT
+from Agents.services.document_parsers import extract_chapter_targets, find_best_document_match
 
 class MultiAgentRouter:
-    """Routes queries to appropriate agents based on relevance and type."""
-    
+    """Routes queries to appropriate agents based on relevance and intent."""
+
     def __init__(self, llm_url: str = LLM_SERVER_URL):
         self.llm_url = llm_url
-    
+        self.summary_keywords = [
+            "summary", "summarize", "overview", "brief", "abstract",
+            "sum up", "main points", "key points", "outline", "gist"
+        ]
+        self.chapter_keywords = ["chapter", "section", "part"]
+        self.all_docs_keywords = [
+            "all documents", "all docs", "across documents",
+            "everything", "entire set", "all files"
+        ]
+
+    @staticmethod
+    def _tokenize_words(text: str) -> List[str]:
+        return re.findall(r"[a-zA-Z0-9_]+", text.lower())
+
     def check_query_relevance(self, query: str, document_names: List[str]) -> Dict[str, Any]:
         """Check if query is relevant to loaded documents."""
         if not document_names:
             return {"is_relevant": False, "confidence": 0.0, "reason": "No documents loaded"}
-        
-        # Fallback: keyword matching (fast, reliable, no LLM needed)
+
         query_lower = query.lower()
-        doc_text_lower = ' '.join(document_names).lower()
-        
-        # Simple keyword overlap
-        query_words = set(query_lower.split())
-        doc_words = set(doc_text_lower.split())
-        overlap = len(query_words & doc_words) / len(query_words) if query_words else 0
-        
-        # Also check for summarization keywords
-        summarize_keywords = ['summary', 'summarize', 'overview', 'brief', 'abstract', 'sum up']
-        has_summary_keyword = any(kw in query_lower for kw in summarize_keywords)
-        
-        # If has summary keyword, always search documents
-        is_relevant = has_summary_keyword or overlap > 0.1  # Lower threshold for better recall
-        
+        query_words = set(self._tokenize_words(query_lower))
+        doc_words = set(self._tokenize_words(" ".join(document_names)))
+        overlap = len(query_words & doc_words) / len(query_words) if query_words else 0.0
+
+        has_summary_keyword = any(keyword in query_lower for keyword in self.summary_keywords)
+        has_chapter_keyword = any(keyword in query_lower for keyword in self.chapter_keywords)
+        is_relevant = has_summary_keyword or has_chapter_keyword or overlap > 0.08
+
         return {
             "is_relevant": is_relevant,
-            "confidence": min(max(overlap, 0.3 if has_summary_keyword else 0.0), 1.0),
-            "reason": "Summary request" if has_summary_keyword else ("Keyword match" if overlap > 0.1 else "Different topic")
+            "confidence": min(max(overlap, 0.35 if (has_summary_keyword or has_chapter_keyword) else 0.05), 1.0),
+            "reason": (
+                "Summary request" if has_summary_keyword else
+                ("Chapter-focused request" if has_chapter_keyword else
+                 ("Keyword overlap with filenames" if overlap > 0.08 else "Different topic"))
+            )
         }
-    
-    def determine_query_type(self, query: str) -> Dict[str, Any]:
-        """Determine if query is asking for summary or topic search."""
+
+    def determine_query_intent(self, query: str) -> Dict[str, Any]:
+        """Determine query intent and route category."""
         query_lower = query.lower()
-        
-        # Keywords for different query types
-        summarize_keywords = [
-            'summary', 'summarize', 'overview', 'brief', 'abstract',
-            'sum up', 'main points', 'key points', 'outline', 'gist',
-            'what is', 'tell me about', 'describe', 'explain'
-        ]
-        
-        is_summarization = any(kw in query_lower for kw in summarize_keywords)
-        
+        chapter_targets = extract_chapter_targets(query)
+        has_summary_keyword = any(keyword in query_lower for keyword in self.summary_keywords)
+        has_all_docs_keyword = any(keyword in query_lower for keyword in self.all_docs_keywords)
+
+        if chapter_targets:
+            route_type = "chapter_summary"
+        elif has_summary_keyword and has_all_docs_keyword:
+            route_type = "all_documents_summary"
+        elif has_summary_keyword:
+            route_type = "single_document_summary"
+        else:
+            route_type = "document_retriever"
+
         return {
-            "query_type": "summarization" if is_summarization else "topic_search",
-            "is_summarization": is_summarization,
-            "keywords": summarize_keywords if is_summarization else []
+            "route_type": route_type,
+            "chapter_targets": chapter_targets,
+            "is_summarization": route_type in {
+                "all_documents_summary",
+                "single_document_summary",
+                "chapter_summary",
+            },
         }
-    
+
     def route_query(self, query: str, document_names: List[str], has_documents: bool) -> Dict[str, Any]:
-        """Route query to appropriate agent."""
-        
-        # Step 1: Check relevance
+        """Route query to an execution plan with structured metadata."""
+        steps: List[Dict[str, str]] = []
+        steps.append({"step": "query_received", "description": "Received user query"})
+
         relevance = self.check_query_relevance(query, document_names)
-        
-        if has_documents and not relevance["is_relevant"]:
-            # Not relevant to documents - use general LLM
-            return {
-                "agent": "general_llm",
-                "reason": "Query not relevant to loaded documents",
-                "should_search": False,
-                "relevance": relevance
-            }
-        
+        steps.append({
+            "step": "relevance_check",
+            "description": f"Relevance={relevance['confidence']:.2f} ({relevance['reason']})"
+        })
+
         if not has_documents:
-            # No documents - use general LLM
+            steps.append({"step": "routing_decision", "description": "No documents available, route to general LLM"})
             return {
                 "agent": "general_llm",
+                "route_type": "general_llm",
                 "reason": "No documents loaded",
                 "should_search": False,
-                "relevance": relevance
+                "relevance": relevance,
+                "confidence": relevance["confidence"],
+                "target_documents": [],
+                "target_chapters": [],
+                "top_k": 0,
+                "steps": steps,
             }
-        
-        # Step 2: Determine query type
-        query_type = self.determine_query_type(query)
-        
-        if query_type["is_summarization"]:
+
+        if has_documents and not relevance["is_relevant"]:
+            steps.append({"step": "routing_decision", "description": "Query not document-relevant, route to general LLM"})
             return {
-                "agent": "summarizer",
-                "reason": query_type["keywords"],
+                "agent": "general_llm",
+                "route_type": "general_llm",
+                "reason": "Query not relevant to loaded documents",
+                "should_search": False,
+                "relevance": relevance,
+                "confidence": relevance["confidence"],
+                "target_documents": [],
+                "target_chapters": [],
+                "top_k": 0,
+                "steps": steps,
+            }
+
+        intent = self.determine_query_intent(query)
+        best_match = find_best_document_match(query, document_names)
+        target_document = best_match if best_match else ""
+        target_documents = [target_document] if target_document else []
+
+        steps.append({
+            "step": "intent_detection",
+            "description": f"Detected route candidate: {intent['route_type']}"
+        })
+        if target_document:
+            steps.append({
+                "step": "document_targeting",
+                "description": f"Matched target document: {target_document}"
+            })
+
+        route_type = intent["route_type"]
+        if route_type == "single_document_summary" and not target_documents:
+            route_type = "all_documents_summary"
+            steps.append({
+                "step": "document_targeting",
+                "description": "No specific file detected, switched to all-documents summary"
+            })
+
+        if route_type == "chapter_summary" and not target_documents:
+            # Chapter request without explicit file defaults to all documents.
+            target_documents = list(document_names)
+
+        if route_type in {"all_documents_summary", "single_document_summary", "chapter_summary"}:
+            top_k = 12 if route_type == "chapter_summary" else 10
+            reason = {
+                "all_documents_summary": "Summarize all loaded documents",
+                "single_document_summary": "Summarize a selected document",
+                "chapter_summary": "Summarize requested chapters/sections",
+            }[route_type]
+            steps.append({"step": "routing_decision", "description": f"Routed to {route_type}"})
+            return {
+                "agent": route_type,
+                "route_type": route_type,
+                "reason": reason,
                 "should_search": True,
                 "search_strategy": "summarization",
-                "top_k": 10,  # Get more chunks for summary
-                "query_type": query_type
+                "top_k": top_k,
+                "relevance": relevance,
+                "confidence": relevance["confidence"],
+                "target_documents": target_documents,
+                "target_chapters": intent["chapter_targets"],
+                "steps": steps,
             }
-        
-        # Step 3: Topic search
+
+        steps.append({"step": "routing_decision", "description": "Routed to document retriever"})
         return {
             "agent": "document_retriever",
+            "route_type": "document_retriever",
             "reason": "Topic search in documents",
             "should_search": True,
             "search_strategy": "topic_search",
-            "top_k": 5,  # Fewer chunks for specific topic
-            "query_type": query_type
+            "top_k": 5,
+            "relevance": relevance,
+            "confidence": relevance["confidence"],
+            "target_documents": target_documents,
+            "target_chapters": [],
+            "steps": steps,
         }
-    
+
     def _call_llm(self, prompt: str) -> str:
         """Call LLM for decision making with fallback."""
         try:
             response = requests.post(
                 f"{self.llm_url}/v1/chat/completions",
                 json={
-                    "model": "local-model",
+                    "model": LLM_MODEL,
                     "messages": [
                         {"role": "system", "content": "You are a helpful assistant. Answer concisely."},
                         {"role": "user", "content": prompt}
                     ],
                     "temperature": 0.3,
-                    "max_tokens": 200,
+                    "max_tokens": 400,
                 },
-                timeout=10
+                timeout=LLM_TIMEOUT
             )
             response.raise_for_status()
             data = response.json()
             return data["choices"][0]["message"]["content"]
         except Exception as e:
-            print(f"⚠️ LLM call failed (will use fallback): {str(e)}")
             raise Exception(f"LLM call failed: {str(e)}")
-    
+
     def generate_answer(self, query: str, context: str) -> str:
         """Generate answer using LLM with fallback."""
         prompt = f"""Based on the following context from documents, answer the question concisely and accurately.
@@ -137,24 +213,23 @@ Question: {query}
 Answer:"""
         try:
             return self._call_llm(prompt)
-        except:
-            # Fallback: extract key sentences from context
-            sentences = context.split('. ')
+        except Exception:
+            sentences = context.split(". ")
             return ' '.join(sentences[:3]) if sentences else "Unable to generate answer."
-    
-    def generate_summary(self, context: str, document_name: str) -> str:
-        """Generate summary of document with fallback."""
-        prompt = f"""Please provide a concise summary of the following content from '{document_name}':
+
+    def generate_summary(self, context: str, document_name: str, instructions: str = "") -> str:
+        """Generate summary of document/chapter content with fallback."""
+        prompt = f"""Please provide a concise summary of the following content from '{document_name}'.
+{instructions}
 
 {context}
 
 Summary:"""
         try:
             return self._call_llm(prompt)
-        except:
-            # Fallback: extract first few sentences
-            sentences = context.split('. ')
-            summary = '. '.join(sentences[:2]) + '.'
+        except Exception:
+            sentences = context.split(". ")
+            summary = ". ".join(sentences[:2]) + "."
             return summary if len(summary) > 10 else "Summary could not be generated."
 
 

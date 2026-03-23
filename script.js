@@ -1,10 +1,12 @@
 // Configuration
 const API_BASE_URL = 'http://localhost:8000/api/agents';
-const MAX_RETRIES = 3;
 
 // State
 let documents = {};
 let conversationHistory = [];
+let activeTrace = { traceId: null, events: [] };
+let isBusyUploading = false;
+let isQueryInProgress = false;
 
 // DOM Elements
 const chatMessages = document.getElementById('chat-messages');
@@ -14,11 +16,16 @@ const fileInput = document.getElementById('file-input');
 const uploadArea = document.getElementById('upload-area');
 const documentsList = document.getElementById('documents-list');
 const clearAllBtn = document.getElementById('clear-all-btn');
+const routeBadge = document.getElementById('route-badge');
+const timelineList = document.getElementById('timeline-list');
+const historyList = document.getElementById('history-list');
+const inputLockMessage = document.getElementById('input-lock-message');
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
     setupEventListeners();
     loadDocuments();
+    loadHistory();
 });
 
 function setupEventListeners() {
@@ -116,21 +123,15 @@ async function handleFileSelect() {
     const files = fileInput.files;
     if (!files.length) return;
 
-    // Disable further selection while uploading
-    fileInput.disabled = true;
-    uploadArea.style.opacity = '0.5';
-    uploadArea.style.pointerEvents = 'none';
+    setUploadBusy(true);
 
     try {
         for (let file of files) {
             await uploadFile(file);
         }
     } finally {
-        // Re-enable
-        fileInput.disabled = false;
-        uploadArea.style.opacity = '1';
-        uploadArea.style.pointerEvents = 'auto';
-        fileInput.value = '';  // Clear the input
+        setUploadBusy(false);
+        fileInput.value = '';
     }
 }
 
@@ -255,9 +256,11 @@ async function clearAllDocuments() {
         await Promise.all(promises);
         documents = {};
         conversationHistory = [];
+        resetTracePanels();
         renderDocuments();
         chatMessages.innerHTML = '';
         addMessage('assistant', '🗑️ All documents cleared. Ready for new uploads!');
+        await loadHistory();
     } catch (error) {
         console.error('Clear error:', error);
         alert('Failed to clear documents');
@@ -265,6 +268,8 @@ async function clearAllDocuments() {
 }
 
 async function sendMessage() {
+    if (isBusyUploading || isQueryInProgress) return;
+
     const message = chatInput.value.trim();
     if (!message) return;
 
@@ -272,7 +277,8 @@ async function sendMessage() {
     addMessage('user', message);
     chatInput.value = '';
     chatInput.style.height = 'auto';
-    sendBtn.disabled = true;
+    isQueryInProgress = true;
+    updateInputAvailability();
 
     // Show processing indicators
     const processingAnimation = document.getElementById('processing-animation');
@@ -285,12 +291,13 @@ async function sendMessage() {
     agentProcessing.style.display = 'block';
     document.getElementById('indicator-agent').textContent = 'Agent: Analyzing';
     document.getElementById('indicator-action').textContent = 'Determining best approach...';
+    resetTracePanels();
 
     // Add loading indicator in chat
     const loadingDiv = document.createElement('div');
     loadingDiv.className = 'chat-message assistant';
     loadingDiv.innerHTML = `
-        <div class="message-avatar">🤖</div>
+        <div class="message-avatar">AI</div>
         <div class="message-content">
             <div class="message-loading">
                 <span></span>
@@ -308,6 +315,7 @@ async function sendMessage() {
 
         if (response.success) {
             addMessage('assistant', response.message, response.metadata);
+            await loadHistory();
         } else {
             addMessage('assistant', `⚠️ ${response.message}`);
         }
@@ -320,92 +328,18 @@ async function sendMessage() {
     // Hide processing indicators
     processingAnimation.style.display = 'none';
     agentProcessing.style.display = 'none';
-    sendBtn.disabled = false;
+    isQueryInProgress = false;
+    updateInputAvailability();
     chatInput.focus();
 }
 
 async function processQuery(query) {
     try {
-        // Update UI to show query is being routed
-        const agentProcessing = document.getElementById('agent-processing-indicator');
-        const processingText = document.getElementById('processing-text');
-        document.getElementById('indicator-agent').textContent = 'Agent: Query Router';
-        document.getElementById('indicator-action').textContent = 'Routing to appropriate agent...';
-        processingText.textContent = '🔀 Routing query...';
-
-        // Use the new multi-agent query endpoint
-        const response = await fetch(`${API_BASE_URL}/query`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                query: query,
-                use_llm: true
-            })
-        });
-
-        const data = await response.json();
-
-        // Handle error responses from backend
+        const data = await streamQuery(query);
         if ('success' in data && !data.success) {
-            return {
-                success: false,
-                message: data.answer || 'Query processing failed'
-            };
+            return { success: false, message: data.answer || 'Query processing failed' };
         }
-
-        if (!response.ok) {
-            throw new Error(`Query failed: ${response.statusText}`);
-        }
-
-        // Update UI with actual agent being used
-        let agentName = 'Unknown';
-        let agentIcon = '🤖';
-        let actionText = 'Processing...';
-        let message = '';
-
-        if (data.agent === 'general_llm') {
-            agentName = 'General LLM';
-            agentIcon = '💬';
-            actionText = 'Generating response...';
-            message = `💬 General Answer:\n\n${data.answer}`;
-        } else if (data.agent === 'summarizer') {
-            agentName = 'Summarizer';
-            agentIcon = '📋';
-            actionText = 'Generating summaries...';
-            message = '📋 **Document Summary:**\n\n';
-            if (data.summaries && Array.isArray(data.summaries)) {
-                data.summaries.forEach(s => {
-                    message += `**${s.document}:**\n${s.summary}\n\n`;
-                });
-            }
-        } else if (data.agent === 'document_retriever') {
-            agentName = 'Document Retriever';
-            agentIcon = '🔍';
-            actionText = 'Searching documents...';
-            message = `${data.answer}\n\n`;
-            if (data.results && data.results.length > 0) {
-                message += '📚 **Sources:**\n';
-                data.results.forEach(r => {
-                    const relevance = Math.round(r.similarity * 100);
-                    message += `- ${r.document} (${relevance}% match)\n`;
-                });
-            }
-        }
-
-        // Update UI with agent info
-        document.getElementById('indicator-agent').textContent = `Agent: ${agentName}`;
-        document.getElementById('indicator-action').textContent = actionText;
-        document.getElementById('processing-text').innerHTML = `${agentIcon} ${agentName}`;
-
-        return {
-            success: true,
-            message: message,
-            metadata: {
-                agent: data.agent,
-                agentName: agentName,
-                results: data.results || []
-            }
-        };
+        return formatFinalResponse(data);
     } catch (error) {
         console.error('Error:', error);
         return {
@@ -415,52 +349,273 @@ async function processQuery(query) {
     }
 }
 
-async function checkQueryRelevance(query) {
-    // Handled by backend now
-    return { isRelevant: true, confidence: 0.8 };
+async function streamQuery(query) {
+    const response = await fetch(`${API_BASE_URL}/query/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            query: query,
+            use_llm: true
+        })
+    });
+
+    if (!response.ok) {
+        throw new Error(`Stream request failed: ${response.statusText}`);
+    }
+    if (!response.body) {
+        throw new Error('Streaming not supported by this browser.');
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buffer = '';
+    let finalResponse = null;
+
+    while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const messages = buffer.split('\n\n');
+        buffer = messages.pop() || '';
+
+        for (const message of messages) {
+            const parsed = parseSSEMessage(message);
+            if (!parsed) continue;
+            const { eventName, data } = parsed;
+            handleStreamEvent(eventName, data);
+            if (eventName === 'final_response' && data.payload?.response) {
+                finalResponse = data.payload.response;
+            }
+        }
+    }
+
+    if (!finalResponse) {
+        throw new Error('No final response received from stream.');
+    }
+    return finalResponse;
 }
 
-async function determineQueryType(query) {
-    // Handled by backend now
-    return { isSummarization: false, targetDocument: null };
+function parseSSEMessage(raw) {
+    const lines = raw.split('\n');
+    let eventName = 'message';
+    let dataLine = '';
+    for (const line of lines) {
+        if (line.startsWith('event:')) {
+            eventName = line.slice(6).trim();
+        } else if (line.startsWith('data:')) {
+            dataLine += line.slice(5).trim();
+        }
+    }
+    if (!dataLine) return null;
+    try {
+        return { eventName, data: JSON.parse(dataLine) };
+    } catch (error) {
+        console.error('Failed to parse SSE data:', error);
+        return null;
+    }
 }
 
-async function summarizeDocuments(collectionName = null) {
-    // Handled by backend now
-    return { success: false, message: 'Summarization handled by backend' };
+function handleStreamEvent(eventName, eventEnvelope) {
+    const payload = eventEnvelope.payload || {};
+    if (payload.trace_id) {
+        activeTrace.traceId = payload.trace_id;
+    }
+    activeTrace.events.push({ eventName, payload, timestamp: eventEnvelope.timestamp });
+    appendTimelineEvent(eventName, payload);
+
+    if (eventName === 'routing_decision') {
+        updateRouteBadge(payload.route_type || payload.agent, payload.reason || 'Routed');
+        document.getElementById('indicator-agent').textContent = `Agent: ${friendlyRouteName(payload.route_type || payload.agent)}`;
+        document.getElementById('indicator-action').textContent = payload.reason || 'Processing request...';
+    }
+    if (eventName === 'agent_started') {
+        document.getElementById('processing-text').textContent = `⚙️ ${friendlyRouteName(payload.agent || 'agent')} running...`;
+    }
 }
 
-async function searchDocuments(query) {
-    // Handled by backend now
-    return { success: false, message: 'Search handled by backend' };
+function appendTimelineEvent(eventName, payload) {
+    if (timelineList.querySelector('.empty-state')) {
+        timelineList.innerHTML = '';
+    }
+    const item = document.createElement('div');
+    item.className = 'timeline-item';
+
+    const title = document.createElement('div');
+    title.className = 'timeline-item-title';
+    title.textContent = eventName.replace(/_/g, ' ');
+
+    const body = document.createElement('div');
+    body.className = 'timeline-item-body';
+    body.textContent = summarizeEventPayload(eventName, payload);
+
+    item.appendChild(title);
+    item.appendChild(body);
+    timelineList.appendChild(item);
+    timelineList.scrollTop = timelineList.scrollHeight;
 }
 
-async function askGeneralLLM(query) {
-    // Handled by backend
-    return { success: false, message: 'LLM queries handled by backend' };
+function summarizeEventPayload(eventName, payload) {
+    if (eventName === 'routing_decision') {
+        return `${friendlyRouteName(payload.route_type || payload.agent)} | ${payload.reason || 'route selected'}`;
+    }
+    if (eventName === 'chapter_resolution') {
+        return `${payload.document || 'Document'} | ${payload.mode || 'resolved'} | chunks: ${payload.matched_chunks || 0}`;
+    }
+    if (eventName === 'retrieval_completed') {
+        return `${payload.document || 'Document'} | ${payload.result_count || 0} chunks retrieved`;
+    }
+    if (eventName === 'summary_partial') {
+        return `${payload.document || 'Document'} partial summary completed`;
+    }
+    if (eventName === 'error') {
+        return payload.message || 'Unknown error';
+    }
+    if (payload.document) {
+        return `${payload.document}`;
+    }
+    return payload.message || 'processing';
 }
 
-async function generateSummary(context, docName) {
-    // Handled by backend
-    return '';
+function formatFinalResponse(data) {
+    let agentName = friendlyRouteName(data.agent);
+    let message = '';
+    let actionText = '';
+
+    if (data.agent === 'general_llm') {
+        actionText = 'Generated a direct LLM response';
+        message = `${data.answer}`;
+    } else if (['all_documents_summary', 'single_document_summary', 'chapter_summary'].includes(data.agent)) {
+        actionText = data.agent === 'chapter_summary' ? 'Generated chapter-focused summaries' : 'Generated document summaries';
+        message = '';
+        if (Array.isArray(data.summaries)) {
+            data.summaries.forEach(s => {
+                const chapterLine = s.chapters ? `\n_Targets: ${s.chapters.join(', ')}_` : '';
+                message += `**${s.document}:**\n${s.summary}${chapterLine}\n\n`;
+            });
+        }
+    } else if (data.agent === 'document_retriever') {
+        actionText = 'Retrieved relevant chunks and generated answer';
+        message = `${data.answer}`;
+    } else {
+        actionText = 'Completed';
+        message = data.answer || 'Completed processing.';
+    }
+
+    document.getElementById('indicator-agent').textContent = `Agent: ${agentName}`;
+    document.getElementById('indicator-action').textContent = actionText;
+    document.getElementById('processing-text').textContent = `✅ ${agentName}`;
+
+    return {
+        success: true,
+        message,
+        metadata: {
+            traceId: data.trace_id,
+            agent: data.agent,
+            routeType: data.routing?.route_type || data.agent,
+            routeReason: data.routing?.reason || '',
+            routing: data.routing || {},
+            events: activeTrace.events,
+            results: data.results || [],
+            summaries: data.summaries || []
+        }
+    };
 }
 
-async function generateAnswer(query, context) {
-    // Handled by backend
-    return '';
+function friendlyRouteName(routeType) {
+    const map = {
+        general_llm: 'General LLM',
+        document_retriever: 'Document Retriever',
+        all_documents_summary: 'All Documents Summarizer',
+        single_document_summary: 'Single Document Summarizer',
+        chapter_summary: 'Chapter Summarizer'
+    };
+    return map[routeType] || 'Agent';
+}
+
+function updateRouteBadge(routeType, reason) {
+    if (!routeBadge) return;
+    routeBadge.querySelector('.route-agent').textContent = friendlyRouteName(routeType || 'general_llm');
+    routeBadge.querySelector('.route-reason').textContent = reason || 'route selected';
+}
+
+function resetTracePanels() {
+    activeTrace = { traceId: null, events: [] };
+    if (timelineList) {
+        timelineList.innerHTML = '<p class="empty-state">Run a query to see live flow</p>';
+    }
+    updateRouteBadge('general_llm', 'Waiting for query');
+}
+
+async function loadHistory() {
+    if (!historyList) return;
+    try {
+        const response = await fetch(`${API_BASE_URL}/history?limit=30`);
+        if (!response.ok) {
+            throw new Error(`History load failed: ${response.statusText}`);
+        }
+        const data = await response.json();
+        renderHistory(Array.isArray(data.history) ? data.history : []);
+    } catch (error) {
+        console.error('History load error:', error);
+        historyList.innerHTML = `<p class="empty-state">History unavailable: ${escapeHTML(error.message)}</p>`;
+    }
+}
+
+function renderHistory(historyItems) {
+    if (!historyList) return;
+    if (!historyItems.length) {
+        historyList.innerHTML = '<p class="empty-state">No history yet</p>';
+        return;
+    }
+
+    historyList.innerHTML = historyItems.map(item => {
+        const routeType = item.routing?.route_type || item.response?.agent || 'unknown';
+        const query = escapeHTML(item.query || '');
+        const routeLabel = escapeHTML(friendlyRouteName(routeType));
+        const eventCount = Array.isArray(item.events) ? item.events.length : 0;
+        return `
+            <div class="history-item">
+                <div class="history-item-route">${routeLabel}</div>
+                <div>${query.slice(0, 120)}</div>
+                <small>${eventCount} events</small>
+            </div>
+        `;
+    }).join('');
 }
 
 function addMessage(role, content, metadata = {}) {
     const messageDiv = document.createElement('div');
     messageDiv.className = `chat-message ${role}`;
 
-    const avatar = role === 'user' ? '👤' : '🤖';
+    const avatar = role === 'user' ? 'You' : 'AI';
     const formattedContent = role === 'assistant' ? markdownToHTML(content) : escapeHTML(content);
 
-    messageDiv.innerHTML = `
-        <div class="message-avatar">${avatar}</div>
-        <div class="message-content">${formattedContent}</div>
-    `;
+    messageDiv.innerHTML = `<div class="message-avatar">${avatar}</div><div class="message-content">${formattedContent}</div>`;
+
+    if (role === 'assistant') {
+        const contentEl = messageDiv.querySelector('.message-content');
+        const metadataRow = document.createElement('div');
+        metadataRow.className = 'message-meta';
+
+        const routeType = metadata.routeType || metadata.agent;
+        if (routeType) {
+            metadataRow.innerHTML += `<span class="meta-chip">Agent: ${escapeHTML(friendlyRouteName(routeType))}</span>`;
+        }
+        if (metadata.routeReason) {
+            metadataRow.innerHTML += `<span class="meta-chip">${escapeHTML(metadata.routeReason)}</span>`;
+        }
+        if (metadata.traceId) {
+            metadataRow.innerHTML += `<span class="meta-chip">Trace: ${escapeHTML(metadata.traceId.slice(0, 8))}</span>`;
+        }
+        if (metadataRow.innerHTML.trim().length > 0) {
+            contentEl.appendChild(metadataRow);
+        }
+
+        if (Array.isArray(metadata.results) && metadata.results.length > 0) {
+            contentEl.appendChild(renderRetrievedChunks(metadata.results));
+        }
+    }
 
     chatMessages.appendChild(messageDiv);
     chatMessages.scrollTop = chatMessages.scrollHeight;
@@ -484,6 +639,53 @@ function escapeHTML(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+function renderRetrievedChunks(results) {
+    const details = document.createElement('details');
+    details.className = 'retrieved-chunks';
+
+    const summary = document.createElement('summary');
+    summary.textContent = `Retrieved chunks (${results.length})`;
+    details.appendChild(summary);
+
+    const list = document.createElement('div');
+    list.className = 'chunk-list';
+
+    results.slice(0, 5).forEach((result) => {
+        const item = document.createElement('div');
+        item.className = 'chunk-item';
+        const similarity = Math.round((result.similarity || 0) * 100);
+        const preview = (result.content || '').slice(0, 260);
+        item.innerHTML = `
+            <div class="chunk-head">
+                <span>${escapeHTML(result.document || 'Document')}</span>
+                <span>${similarity}% match</span>
+            </div>
+            <div class="chunk-preview">${escapeHTML(preview)}${preview.length >= 260 ? '...' : ''}</div>
+        `;
+        list.appendChild(item);
+    });
+
+    details.appendChild(list);
+    return details;
+}
+
+function setUploadBusy(isBusy) {
+    isBusyUploading = isBusy;
+    fileInput.disabled = isBusy;
+    uploadArea.style.opacity = isBusy ? '0.6' : '1';
+    uploadArea.style.pointerEvents = isBusy ? 'none' : 'auto';
+    if (inputLockMessage) {
+        inputLockMessage.style.display = isBusy ? 'block' : 'none';
+    }
+    updateInputAvailability();
+}
+
+function updateInputAvailability() {
+    const disabled = isBusyUploading || isQueryInProgress;
+    chatInput.disabled = disabled;
+    sendBtn.disabled = disabled;
 }
 
 function closeModal() {

@@ -10,7 +10,25 @@ Get up and running with the Local Agent Chatbot in 5 minutes!
 pip install -r requirements.txt
 ```
 
-### Step 2: Start Backend (1 min)
+### Step 2: Configure LM Studio + model (1 min)
+
+Make sure LM Studio is running and serving OpenAI-compatible API on `http://localhost:1234`.
+
+Set environment variables:
+
+```bash
+# macOS/Linux
+export LLM_SERVER="http://localhost:1234"
+export LLM_MODEL="qwen-3.5-vl-9b"
+```
+
+```powershell
+# Windows PowerShell
+$env:LLM_SERVER="http://localhost:1234"
+$env:LLM_MODEL="qwen-3.5-vl-9b"
+```
+
+### Step 3: Start Backend (1 min)
 
 ```bash
 python -m uvicorn backend:app --reload --host 0.0.0.0 --port 8000
@@ -22,7 +40,13 @@ Uvicorn running on http://0.0.0.0:8000
 Press CTRL+C to quit
 ```
 
-### Step 3: Start Streamlit (in new terminal, 1 min)
+### Step 4: Open vanilla UI (1 min)
+
+Open: **http://localhost:8000/static/index.html**
+
+You get realtime routing and agent processing timeline via SSE.
+
+### Step 5: (Optional) Start Streamlit (in new terminal, 1 min)
 
 ```bash
 streamlit run streamlit_app.py
@@ -35,17 +59,15 @@ You should see:
   Local URL: http://localhost:8501
 ```
 
-### Step 4: Open UI (1 min)
+### Step 6: Upload and Query (1 min)
 
-Visit: **http://localhost:8501** in your browser
-
-### Step 5: Upload and Search (1 min)
-
-1. Use the sidebar to upload a document (TXT, PDF, CSV, JSON, or MD)
+1. Use the sidebar to upload documents (TXT, PDF, CSV, JSON, or MD)
 2. Wait for the agent to be created
-3. Enter a search query in the main area
-4. Toggle "Use LLM" to get AI-powered answers
-5. View search results and chat history
+3. Ask one of these:
+   - "Summarize all documents"
+   - "Summarize `<document name>`"
+   - "Summarize chapter 3 of `<document name>`"
+4. Watch route + timeline + persisted history
 
 ## 📚 Full Setup with One Command
 
@@ -53,6 +75,8 @@ For bash/zsh:
 ```bash
 chmod +x start.sh && ./start.sh
 ```
+
+For Windows users, run backend and UI commands manually from two terminals.
 
 This will:
 - Install dependencies
@@ -248,11 +272,11 @@ print(results.json())
 ```
 
 ### Custom Configuration
-Edit [Agents/config.py](Agents/config.py):
-```python
-CHUNK_SIZE = 1000          # Larger chunks  
-CHROMA_EMBEDDING_MODEL = "..." # Different embeddings
-LLM_SERVER_URL = "https://your-server.com"  # Different LLM
+Use environment variables:
+```bash
+LLM_SERVER=http://localhost:1234
+LLM_MODEL=qwen-3.5-vl-9b
+BACKEND_API_URL=http://localhost:8000/api/agents
 ```
 
 ## 💡 Pro Tips
@@ -273,6 +297,9 @@ python -m uvicorn backend:app --reload --host 0.0.0.0 --port 8000
 
 # Run frontend
 streamlit run streamlit_app.py
+
+# Vanilla UI
+open http://localhost:8000/static/index.html
 
 # Check health
 curl http://localhost:8000/health

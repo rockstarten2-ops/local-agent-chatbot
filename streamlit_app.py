@@ -1,12 +1,14 @@
 import streamlit as st
 import requests
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 
 # Configuration
-LLM_SERVER_URL = "http://localhost:1234"
-BACKEND_API_URL = "http://localhost:8000/api/agents"
+LLM_SERVER_URL = os.getenv("LLM_SERVER", "http://localhost:1234")
+LLM_MODEL = os.getenv("LLM_MODEL", "local-model")
+BACKEND_API_URL = os.getenv("BACKEND_API_URL", "http://localhost:8000/api/agents")
 
 # Initialize session state FIRST - required by Streamlit before page config
 if "messages" not in st.session_state:
@@ -32,7 +34,7 @@ Answer:"""
         response = requests.post(
             f"{LLM_SERVER_URL}/v1/chat/completions",
             json={
-                "model": "local-model",
+                "model": LLM_MODEL,
                 "messages": [
                     {"role": "system", "content": "You are a helpful assistant that answers questions based on provided document context. Be concise and accurate."},
                     {"role": "user", "content": prompt}

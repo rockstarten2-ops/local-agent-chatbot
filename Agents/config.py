@@ -15,7 +15,7 @@ CHROMA_DB_DIR.mkdir(parents=True, exist_ok=True)
 # LLM Configuration
 LLM_SERVER_URL = os.getenv("LLM_SERVER", "http://localhost:1234")
 LLM_API_ENDPOINT = f"{LLM_SERVER_URL}/v1/chat/completions"
-LLM_MODEL = "local-model"
+LLM_MODEL = os.getenv("LLM_MODEL", "local-model")
 LLM_TIMEOUT = 10  # seconds
 
 # ChromaDB Configuration
@@ -37,5 +37,5 @@ CHUNK_SIZE = 500
 CHUNK_OVERLAP = 50
 
 # API Configuration
-API_HOST = "0.0.0.0"
-API_PORT = 8000
+API_HOST = os.getenv("API_HOST", "0.0.0.0")
+API_PORT = int(os.getenv("API_PORT", "8000"))

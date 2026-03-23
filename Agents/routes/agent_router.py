@@ -1,19 +1,27 @@
 """Agent routes for FastAPI."""
-from fastapi import APIRouter, UploadFile, File, HTTPException, Query
-from pydantic import BaseModel
-from typing import List, Dict, Any, Optional
+import asyncio
+import inspect
 import io
-from pathlib import Path
+import json
+from datetime import datetime, timezone
+from uuid import uuid4
+from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+from typing import List, Dict, Any, Callable, Awaitable, Optional
 
 from Agents.services.agent_factory import AgentFactory
 from Agents.apis.agent_api_factory import AgentAPIFactory
 from Agents.services.file_processor import FileProcessor
 from Agents.services.multi_agent_router import get_router
+from Agents.services.document_parsers import chunk_matches_chapter
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 
 # Store active agents
 active_agents: Dict[str, Dict[str, Any]] = {}
+processing_history: List[Dict[str, Any]] = []
+MAX_HISTORY_ITEMS = 100
 
 class SearchQuery(BaseModel):
     """Search query model."""
@@ -157,6 +165,7 @@ async def clear_all() -> Dict[str, str]:
         for collection_name in list(active_agents.keys()):
             AgentFactory.remove_agent(collection_name)
         active_agents.clear()
+        processing_history.clear()
         
         return {"message": "All agents cleared successfully"}
         
@@ -170,150 +179,383 @@ class MultiAgentQuery(BaseModel):
     use_llm: bool = True
 
 
-@router.post("/query")
-async def multi_agent_query(request: MultiAgentQuery) -> Dict[str, Any]:
-    """Process query using multi-agent routing system."""
+def _utc_now_iso() -> str:
+    """Return UTC timestamp in ISO format."""
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _append_history(entry: Dict[str, Any]) -> None:
+    """Append processing history with max length cap."""
+    processing_history.append(entry)
+    if len(processing_history) > MAX_HISTORY_ITEMS:
+        del processing_history[:-MAX_HISTORY_ITEMS]
+
+
+def _format_sse(event_name: str, payload: Dict[str, Any]) -> str:
+    """Format event payload as SSE frame."""
+    return f"event: {event_name}\ndata: {json.dumps(payload)}\n\n"
+
+
+async def _emit_event(
+    collector: List[Dict[str, Any]],
+    event_handler: Optional[Callable[[Dict[str, Any]], Awaitable[None]]],
+    event_name: str,
+    payload: Dict[str, Any],
+) -> None:
+    """Record event and forward to streaming handler."""
+    event = {
+        "event": event_name,
+        "timestamp": _utc_now_iso(),
+        "payload": payload,
+    }
+    collector.append(event)
+    if event_handler:
+        maybe_awaitable = event_handler(event)
+        if inspect.isawaitable(maybe_awaitable):
+            await maybe_awaitable
+
+
+def _resolve_target_collections(target_documents: List[str]) -> Dict[str, Dict[str, Any]]:
+    """Return active agents limited to target documents when provided."""
+    if not target_documents:
+        return dict(active_agents)
+
+    target_set = {target.lower() for target in target_documents}
+    filtered = {}
+    for collection_name, agent_info in active_agents.items():
+        filename = agent_info["metadata"].get("filename", "unknown")
+        if filename.lower() in target_set:
+            filtered[collection_name] = agent_info
+    return filtered if filtered else dict(active_agents)
+
+
+async def _execute_multi_agent_query(
+    request: MultiAgentQuery,
+    event_handler: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
+) -> Dict[str, Any]:
+    """Shared execution logic for JSON and streaming endpoints."""
+    trace_id = str(uuid4())
+    started_at = _utc_now_iso()
+    events: List[Dict[str, Any]] = []
+    router_service = get_router()
+
     try:
-        router = get_router()
-        
-        # Get document info
+        await _emit_event(events, event_handler, "query_received", {
+            "trace_id": trace_id,
+            "query": request.query,
+            "started_at": started_at,
+        })
+
         document_names = [
-            agent_info['metadata'].get('filename', 'unknown')
+            agent_info["metadata"].get("filename", "unknown")
             for agent_info in active_agents.values()
         ]
         has_documents = len(active_agents) > 0
-        
-        # Route the query
-        routing_info = router.route_query(request.query, document_names, has_documents)
-        
-        # Execute based on routing decision
-        if routing_info["agent"] == "general_llm":
-            # General LLM mode - answer without document context
+
+        routing_info = router_service.route_query(request.query, document_names, has_documents)
+        await _emit_event(events, event_handler, "routing_decision", {
+            "trace_id": trace_id,
+            "route_type": routing_info.get("route_type", routing_info.get("agent")),
+            "agent": routing_info.get("agent"),
+            "reason": routing_info.get("reason"),
+            "confidence": routing_info.get("confidence", 0.0),
+            "target_documents": routing_info.get("target_documents", []),
+            "target_chapters": routing_info.get("target_chapters", []),
+            "steps": routing_info.get("steps", []),
+        })
+
+        route_type = routing_info.get("route_type", routing_info.get("agent", "general_llm"))
+
+        if route_type == "general_llm":
+            await _emit_event(events, event_handler, "agent_started", {
+                "trace_id": trace_id,
+                "agent": "general_llm",
+                "message": "Generating response without document context",
+            })
             try:
-                answer = router._call_llm(request.query)
-            except Exception as e:
-                print(f"⚠️ LLM failed, using fallback: {e}")
-                answer = f"I couldn't generate a response, but here's what I Know: {request.query[:100]}..."
-            
-            return {
+                answer = router_service._call_llm(request.query)
+            except Exception:
+                answer = f"I could not generate a response right now. Query: {request.query[:120]}"
+            response_payload = {
                 "success": True,
+                "trace_id": trace_id,
                 "agent": "general_llm",
                 "answer": answer,
-                "routing": routing_info
+                "routing": routing_info,
             }
-        
-        elif routing_info["agent"] == "summarizer":
-            # Summarization mode
+            await _emit_event(events, event_handler, "agent_completed", {
+                "trace_id": trace_id,
+                "agent": "general_llm",
+            })
+            await _emit_event(events, event_handler, "final_response", {
+                "trace_id": trace_id,
+                "agent": "general_llm",
+                "response": response_payload,
+            })
+        elif route_type in {"all_documents_summary", "single_document_summary", "chapter_summary"}:
+            selected_agents = _resolve_target_collections(routing_info.get("target_documents", []))
+            chapter_targets = routing_info.get("target_chapters", [])
             summaries = []
-            
-            try:
-                for collection_name, agent_info in active_agents.items():
-                    api = agent_info['api']
-                    # Get top chunks for summary
-                    result = api.search(
-                        request.query,
-                        use_llm=False,
-                        top_k=routing_info.get("top_k", 10)
-                    )
-                    
-                    if result.get("search_results"):
-                        context = "\n\n".join([
-                            r["content"] for r in result["search_results"][:5]
-                        ])
-                        try:
-                            summary = router.generate_summary(context, agent_info['metadata'].get('filename', 'Document'))
-                        except Exception as e:
-                            print(f"Summary generation failed: {e}")
-                            summary = context[:200] + "..."
-                        
-                        summaries.append({
-                            "document": agent_info['metadata'].get('filename', 'Document'),
-                            "summary": summary
+
+            for collection_name, agent_info in selected_agents.items():
+                filename = agent_info["metadata"].get("filename", "Document")
+                api = agent_info["api"]
+
+                await _emit_event(events, event_handler, "agent_started", {
+                    "trace_id": trace_id,
+                    "agent": route_type,
+                    "document": filename,
+                    "collection": collection_name,
+                })
+
+                result = api.search(
+                    request.query,
+                    use_llm=False,
+                    top_k=routing_info.get("top_k", 10),
+                )
+                search_results = result.get("search_results", [])
+
+                await _emit_event(events, event_handler, "retrieval_completed", {
+                    "trace_id": trace_id,
+                    "document": filename,
+                    "result_count": len(search_results),
+                })
+
+                filtered_results = search_results
+                chapter_fallback_used = False
+                if route_type == "chapter_summary":
+                    chapter_hits = [item for item in search_results if chunk_matches_chapter(item.get("content", ""), chapter_targets)]
+                    if chapter_hits:
+                        filtered_results = chapter_hits
+                        await _emit_event(events, event_handler, "chapter_resolution", {
+                            "trace_id": trace_id,
+                            "document": filename,
+                            "matched_chapters": chapter_targets,
+                            "mode": "heading_detected",
+                            "matched_chunks": len(chapter_hits),
                         })
-            except Exception as e:
-                print(f"Summarization error: {e}")
-            
-            if not summaries:
-                return {
-                    "success": True,
-                    "agent": "summarizer",
-                    "summaries": [{
-                        "document": "No documents",
-                        "summary": "No documents loaded to summarize."
-                    }],
-                    "routing": routing_info
-                }
-            
-            return {
-                "success": True,
-                "agent": "summarizer",
-                "summaries": summaries,
-                "routing": routing_info
-            }
-        
-        else:  # document_retriever
-            # Topic search mode
-            results = []
-            
-            try:
-                for collection_name, agent_info in active_agents.items():
-                    api = agent_info['api']
-                    result = api.search(
-                        request.query,
-                        use_llm=False,
-                        top_k=routing_info.get("top_k", 5)
+                    else:
+                        chapter_fallback_used = True
+                        filtered_results = search_results[: max(1, min(5, len(search_results)))]
+                        await _emit_event(events, event_handler, "chapter_resolution", {
+                            "trace_id": trace_id,
+                            "document": filename,
+                            "matched_chapters": chapter_targets,
+                            "mode": "semantic_fallback",
+                            "matched_chunks": len(filtered_results),
+                        })
+
+                if not filtered_results:
+                    continue
+
+                context = "\n\n".join([item.get("content", "") for item in filtered_results[:5]])
+                summary_instructions = ""
+                if route_type == "chapter_summary" and chapter_targets:
+                    summary_instructions = (
+                        f"Focus only on these chapter/section targets: {', '.join(chapter_targets)}. "
+                        "If exact headings are missing, summarize the closest relevant sections."
                     )
-                    
-                    if result.get("search_results"):
-                        for search_result in result["search_results"]:
-                            if search_result.get("similarity", 0) > 0.2:  # Only high relevance
-                                results.append({
-                                    "document": agent_info['metadata'].get('filename', 'Document'),
-                                    "content": search_result["content"],
-                                    "similarity": search_result.get("similarity", 0)
-                                })
-            except Exception as e:
-                print(f"Search error: {e}")
-            
-            if not results:
-                return {
-                    "success": True,
-                    "agent": "document_retriever",
-                    "answer": "❓ No relevant information found in your documents.",
-                    "results": [],
-                    "routing": routing_info
+                summary_text = router_service.generate_summary(
+                    context,
+                    filename,
+                    instructions=summary_instructions,
+                )
+                summary_item = {
+                    "document": filename,
+                    "summary": summary_text,
                 }
-            
-            # Sort by similarity
-            results.sort(key=lambda x: x["similarity"], reverse=True)
-            
-            # Generate answer using top results
-            context = "\n\n".join([
-                f"[{r['document']}] {r['content']}"
-                for r in results[:3]
-            ])
-            
-            try:
-                answer = router.generate_answer(request.query, context)
-            except Exception as e:
-                print(f"Answer generation failed: {e}")
-                answer = context[:300] + "..."
-            
-            return {
+                if route_type == "chapter_summary":
+                    summary_item["chapters"] = chapter_targets
+                    summary_item["chapter_fallback_used"] = chapter_fallback_used
+                summaries.append(summary_item)
+
+                await _emit_event(events, event_handler, "summary_partial", {
+                    "trace_id": trace_id,
+                    "document": filename,
+                    "agent": route_type,
+                    "chapter_fallback_used": chapter_fallback_used,
+                })
+                await _emit_event(events, event_handler, "agent_completed", {
+                    "trace_id": trace_id,
+                    "agent": route_type,
+                    "document": filename,
+                })
+
+            if not summaries:
+                fallback_message = "No documents matched your request."
+                if route_type == "chapter_summary":
+                    fallback_message = "No chapter-relevant content was found."
+                summaries = [{
+                    "document": "No matches",
+                    "summary": fallback_message,
+                }]
+
+            response_payload = {
                 "success": True,
-                "agent": "document_retriever",
-                "answer": answer,
-                "results": results[:5],  # Return top 5 for UI display
-                "routing": routing_info
+                "trace_id": trace_id,
+                "agent": route_type,
+                "summaries": summaries,
+                "routing": routing_info,
             }
-            
-    except Exception as e:
-        print(f"Query processing error: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return {
-            "success": False,
-            "agent": "error",
-            "answer": f"Error processing query: {str(e)}",
-            "routing": {}
+            await _emit_event(events, event_handler, "final_response", {
+                "trace_id": trace_id,
+                "agent": route_type,
+                "response": response_payload,
+            })
+        else:
+            selected_agents = _resolve_target_collections(routing_info.get("target_documents", []))
+            merged_results = []
+
+            for collection_name, agent_info in selected_agents.items():
+                filename = agent_info["metadata"].get("filename", "Document")
+                api = agent_info["api"]
+
+                await _emit_event(events, event_handler, "agent_started", {
+                    "trace_id": trace_id,
+                    "agent": "document_retriever",
+                    "document": filename,
+                    "collection": collection_name,
+                })
+
+                result = api.search(
+                    request.query,
+                    use_llm=False,
+                    top_k=routing_info.get("top_k", 5),
+                )
+                search_results = result.get("search_results", [])
+                await _emit_event(events, event_handler, "retrieval_completed", {
+                    "trace_id": trace_id,
+                    "document": filename,
+                    "result_count": len(search_results),
+                })
+
+                for item in search_results:
+                    if item.get("similarity", 0) > 0.2:
+                        merged_results.append({
+                            "document": filename,
+                            "content": item.get("content", ""),
+                            "similarity": item.get("similarity", 0),
+                        })
+                await _emit_event(events, event_handler, "agent_completed", {
+                    "trace_id": trace_id,
+                    "agent": "document_retriever",
+                    "document": filename,
+                })
+
+            if not merged_results:
+                response_payload = {
+                    "success": True,
+                    "trace_id": trace_id,
+                    "agent": "document_retriever",
+                    "answer": "No relevant information found in your documents.",
+                    "results": [],
+                    "routing": routing_info,
+                }
+            else:
+                merged_results.sort(key=lambda item: item["similarity"], reverse=True)
+                context = "\n\n".join([
+                    f"[{item['document']}] {item['content']}"
+                    for item in merged_results[:3]
+                ])
+                answer = router_service.generate_answer(request.query, context)
+                response_payload = {
+                    "success": True,
+                    "trace_id": trace_id,
+                    "agent": "document_retriever",
+                    "answer": answer,
+                    "results": merged_results[:5],
+                    "routing": routing_info,
+                }
+
+            await _emit_event(events, event_handler, "final_response", {
+                "trace_id": trace_id,
+                "agent": response_payload["agent"],
+                "response": response_payload,
+            })
+
+        completed_at = _utc_now_iso()
+        history_entry = {
+            "trace_id": trace_id,
+            "query": request.query,
+            "started_at": started_at,
+            "completed_at": completed_at,
+            "routing": response_payload.get("routing", {}),
+            "events": events,
+            "response": response_payload,
         }
+        _append_history(history_entry)
+        return response_payload
+    except Exception as exc:
+        error_payload = {
+            "success": False,
+            "trace_id": trace_id,
+            "agent": "error",
+            "answer": f"Error processing query: {str(exc)}",
+            "routing": {},
+        }
+        await _emit_event(events, event_handler, "error", {
+            "trace_id": trace_id,
+            "message": str(exc),
+        })
+        await _emit_event(events, event_handler, "final_response", {
+            "trace_id": trace_id,
+            "agent": "error",
+            "response": error_payload,
+        })
+        _append_history({
+            "trace_id": trace_id,
+            "query": request.query,
+            "started_at": started_at,
+            "completed_at": _utc_now_iso(),
+            "routing": {},
+            "events": events,
+            "response": error_payload,
+        })
+        return error_payload
+
+
+@router.post("/query")
+async def multi_agent_query(request: MultiAgentQuery) -> Dict[str, Any]:
+    """Process query using multi-agent routing system."""
+    return await _execute_multi_agent_query(request)
+
+
+@router.post("/query/stream")
+async def multi_agent_query_stream(request: MultiAgentQuery) -> StreamingResponse:
+    """Stream multi-agent processing events via SSE."""
+    queue: asyncio.Queue = asyncio.Queue()
+    completion_marker = object()
+
+    async def event_handler(event: Dict[str, Any]) -> None:
+        await queue.put(event)
+
+    async def run_query() -> None:
+        try:
+            await _execute_multi_agent_query(request, event_handler=event_handler)
+        finally:
+            await queue.put(completion_marker)
+
+    async def event_generator():
+        task = asyncio.create_task(run_query())
+        try:
+            while True:
+                item = await queue.get()
+                if item is completion_marker:
+                    break
+                event_name = item.get("event", "message")
+                yield _format_sse(event_name, item)
+        finally:
+            await task
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@router.get("/history")
+async def get_processing_history(limit: int = 20) -> Dict[str, Any]:
+    """Return recent processing traces."""
+    safe_limit = max(1, min(limit, MAX_HISTORY_ITEMS))
+    recent_items = processing_history[-safe_limit:]
+    return {
+        "total": len(processing_history),
+        "history": list(reversed(recent_items)),
+    }

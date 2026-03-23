@@ -3,120 +3,123 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Document Assistant</title>
+    <title>Local Agent Chatbot</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div class="container">
-        <!-- Header -->
         <header class="header">
-            <div class="header-content">
-                <h1>📚 AI Document Assistant</h1>
-                <p>Chat with your documents using intelligent agents</p>
+            <div class="brand">
+                <h1>Local Agent Chatbot</h1>
+                <p>Multi-agent routing, live trace, and source-aware answers</p>
+            </div>
+            <div id="processing-animation" class="top-processing" style="display: none;">
+                <div class="processing-dot"></div>
+                <p id="processing-text">Processing...</p>
             </div>
         </header>
 
         <main class="main-content">
-            <!-- Sidebar: Documents -->
-            <aside class="sidebar">
-                <h2>📁 Loaded Documents</h2>
-                <div id="documents-list" class="documents-list">
-                    <p class="empty-state">No documents uploaded yet</p>
-                </div>
-                <!-- Agent Status Display -->
-                <div id="agent-status" class="agent-status" style="display: none;">
-                    <div class="agent-badge">
-                        <span id="agent-icon" class="agent-icon">🤖</span>
-                        <div class="agent-info">
-                            <p id="agent-name" class="agent-name">Agent</p>
-                            <p id="agent-action" class="agent-action">Processing...</p>
-                        </div>
+            <aside class="left-rail">
+                <section class="panel">
+                    <h2>Sessions</h2>
+                    <div id="history-list" class="history-list">
+                        <p class="empty-state">No history yet</p>
                     </div>
-                </div>
+                </section>
 
-                <!-- Processing Animation -->
-                <div id="processing-animation" class="processing-animation" style="display: none;">
-                    <div class="processing-item">
-                        <div class="processing-spinner"></div>
-                        <p id="processing-text">Processing...</p>
+                <section class="panel">
+                    <h2>Documents</h2>
+                    <div id="documents-list" class="documents-list">
+                        <p class="empty-state">No documents uploaded yet</p>
                     </div>
-                </div>
+                    <button type="button" class="ghost-btn" id="clear-all-btn" style="display: none;">Clear all documents</button>
+                </section>
 
-                <!-- Document Processing List -->
-                <div id="document-processing-list" class="document-processing-list" style="display: none;">
-                    <p class="processing-label">Documents being processed:</p>
+                <section id="document-processing-list" class="panel" style="display: none;">
+                    <h2>File Processing</h2>
                     <div id="processing-docs" class="processing-docs"></div>
-                </div>
-                <button class="btn btn-primary btn-block" id="clear-all-btn" style="display: none;">
-                    🗑️ Clear All
-                </button>
+                </section>
             </aside>
 
-            <!-- Main Chat Area -->
-            <section class="chat-section">
-                <!-- Chat Messages -->
+            <section class="chat-shell">
+                <div class="chat-toolbar">
+                    <div id="route-badge" class="route-badge">
+                        <span class="route-agent">Waiting</span>
+                        <span class="route-reason">No query running</span>
+                    </div>
+                </div>
+
                 <div id="chat-messages" class="chat-messages">
                     <div class="chat-message assistant">
-                        <div class="message-avatar">🤖</div>
+                        <div class="message-avatar">AI</div>
                         <div class="message-content">
-                            <p>👋 Welcome! I'm your AI Document Assistant. I can help you:</p>
-                            <ul>
-                                <li><strong>Upload documents</strong> - PDFs, TXT, CSV, JSON, Markdown</li>
-                                <li><strong>Summarize</strong> - Get quick overviews of your documents</li>
-                                <li><strong>Search</strong> - Find specific information</li>
-                                <li><strong>Answer questions</strong> - Ask anything about your documents</li>
-                            </ul>
+                            Upload files with the <strong>+</strong> button, then ask for:
+                            <br>- all-document summary
+                            <br>- single-document summary
+                            <br>- chapter-level summary
                         </div>
                     </div>
                 </div>
 
-                <!-- Agent Processing Indicator -->
-                <div id="agent-processing-indicator" class="agent-processing-indicator" style="display: none;">
-                    <div class="indicator-content">
-                        <div class="indicator-spinner"></div>
-                        <div class="indicator-text">
-                            <p id="indicator-agent">Agent: General LLM</p>
-                            <p id="indicator-action" class="action-text">Processing your request...</p>
-                        </div>
-                    </div>
+                <div id="agent-processing-indicator" class="agent-indicator" style="display: none;">
+                    <p id="indicator-agent">Agent: General LLM</p>
+                    <p id="indicator-action">Processing your request...</p>
                 </div>
 
-                <!-- File Upload -->
-                <div class="upload-section">
-                    <h3>📤 Upload Documents</h3>
-                    <div class="upload-area" id="upload-area">
+                <div class="composer-shell">
+                    <div id="attachment-chips" class="attachment-chips"></div>
+                    <p id="input-lock-message" class="input-lock-message" style="display: none;">
+                        Files are uploading/chunking. Chat input is temporarily disabled.
+                    </p>
+                    <div class="composer">
+                        <button type="button" id="plus-upload-btn" class="plus-btn" title="Attach files">+</button>
                         <input type="file" id="file-input" multiple accept=".txt,.pdf,.csv,.json,.md" hidden>
-                        <p>Drag files here or <a href="#" onclick="document.getElementById('file-input').click(); return false;">browse</a></p>
-                        <small>Supported: PDF, TXT, CSV, JSON, Markdown</small>
-                    </div>
-                    <div id="upload-progress" style="display: none;">
-                        <p id="upload-status">Uploading...</p>
-                        <div class="progress-bar">
-                            <div id="progress-fill" class="progress-fill"></div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Input Area -->
-                <div class="input-section">
-                    <div class="input-wrapper">
                         <textarea
                             id="chat-input"
                             class="chat-input"
-                            placeholder="Ask me anything about your documents..."
+                            placeholder="Ask about your documents..."
                             rows="1"
                         ></textarea>
-                        <button id="send-btn" class="btn btn-send" title="Send message (Ctrl+Enter)">
-                            ➤
-                        </button>
+                        <button type="button" id="send-btn" class="send-btn" title="Send message">Send</button>
                     </div>
-                    <small class="help-text">💡 Tip: Can summarize documents, search for topics, or answer general questions</small>
                 </div>
             </section>
+
+            <aside class="right-rail">
+                <section class="panel">
+                    <h2>Agent Flow</h2>
+                    <div id="flow-stepper" class="flow-stepper">
+                        <div class="flow-step pending">query received</div>
+                        <div class="flow-step pending">routing decision</div>
+                        <div class="flow-step pending">agent execution</div>
+                        <div class="flow-step pending">response completion</div>
+                    </div>
+                </section>
+
+                <section class="panel">
+                    <h2>Live Events</h2>
+                    <div id="timeline-list" class="timeline-list">
+                        <p class="empty-state">Run a query to see live flow</p>
+                    </div>
+                </section>
+
+                <section class="panel">
+                    <h2>Active Run</h2>
+                    <div id="active-run-summary" class="active-run-summary">
+                        <p class="empty-state">No run selected.</p>
+                    </div>
+                </section>
+                <div id="upload-progress" class="upload-progress" style="display: none;">
+                    <p id="upload-status">Uploading...</p>
+                    <div class="progress-bar">
+                        <div id="progress-fill" class="progress-fill"></div>
+                    </div>
+                </div>
+            </aside>
         </main>
     </div>
 
-    <!-- Modal for displaying detailed content -->
     <div id="content-modal" class="modal" style="display: none;">
         <div class="modal-content">
             <button class="modal-close" onclick="closeModal()">&times;</button>
@@ -124,6 +127,6 @@
         </div>
     </div>
 
-    <script src="script.js"></script>
+    <script src="modern-ui.js"></script>
 </body>
 </html>
