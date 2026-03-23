@@ -740,11 +740,81 @@ html, body {
     padding: 0.65rem 0.8rem 0.8rem;
 }
 
+.web-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-bottom: 0.45rem;
+    font-size: 0.74rem;
+    color: var(--dark-muted);
+}
+
+.web-toggle input {
+    accent-color: var(--dark-accent);
+}
+
 .attachment-chips {
     display: flex;
     flex-wrap: wrap;
     gap: 0.45rem;
     margin-bottom: 0.5rem;
+}
+
+.web-sources {
+    margin-top: 0.55rem;
+    border: 1px solid #4a4a4a;
+    border-radius: 10px;
+    background: #313131;
+}
+
+.web-sources summary {
+    padding: 0.42rem 0.55rem;
+    cursor: pointer;
+    font-size: 0.73rem;
+    color: #bdeedf;
+}
+
+.web-source-list {
+    border-top: 1px solid #4a4a4a;
+    padding: 0.45rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+}
+
+.web-source-item {
+    border: 1px solid #4a4a4a;
+    border-radius: 8px;
+    background: #2f2f2f;
+    padding: 0.42rem 0.5rem;
+}
+
+.web-source-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.45rem;
+    margin-bottom: 0.18rem;
+    font-size: 0.72rem;
+}
+
+.web-source-title {
+    color: #e2e8f0;
+    text-decoration: none;
+    font-weight: 600;
+}
+
+.web-source-title:hover {
+    text-decoration: underline;
+}
+
+.web-source-url {
+    color: #9ca3af;
+    font-size: 0.7rem;
+}
+
+.web-source-snippet {
+    color: #cbd5e1;
+    font-size: 0.74rem;
 }
 
 .attachment-chip {

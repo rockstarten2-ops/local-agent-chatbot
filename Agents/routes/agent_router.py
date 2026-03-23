@@ -15,6 +15,7 @@ from Agents.apis.agent_api_factory import AgentAPIFactory
 from Agents.services.file_processor import FileProcessor
 from Agents.services.multi_agent_router import get_router
 from Agents.services.document_parsers import chunk_matches_chapter
+from Agents.services.internet_search_service import InternetSearchService
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 
@@ -177,6 +178,8 @@ class MultiAgentQuery(BaseModel):
     """Multi-agent query model."""
     query: str
     use_llm: bool = True
+    force_web_search: bool = False
+    web_search_top_k: int = 5
 
 
 def _utc_now_iso() -> str:
@@ -252,7 +255,13 @@ async def _execute_multi_agent_query(
         ]
         has_documents = len(active_agents) > 0
 
-        routing_info = router_service.route_query(request.query, document_names, has_documents)
+        routing_info = router_service.route_query(
+            request.query,
+            document_names,
+            has_documents,
+            force_web_search=request.force_web_search,
+            web_search_top_k=request.web_search_top_k,
+        )
         await _emit_event(events, event_handler, "routing_decision", {
             "trace_id": trace_id,
             "route_type": routing_info.get("route_type", routing_info.get("agent")),
@@ -266,7 +275,71 @@ async def _execute_multi_agent_query(
 
         route_type = routing_info.get("route_type", routing_info.get("agent", "general_llm"))
 
-        if route_type == "general_llm":
+        if route_type == "internet_search":
+            await _emit_event(events, event_handler, "agent_started", {
+                "trace_id": trace_id,
+                "agent": "internet_search",
+                "message": "Searching the internet with SerpAPI",
+            })
+            await _emit_event(events, event_handler, "web_search_started", {
+                "trace_id": trace_id,
+                "query": request.query,
+                "top_k": routing_info.get("top_k", request.web_search_top_k),
+            })
+
+            web_result = InternetSearchService.search(
+                request.query,
+                top_k=routing_info.get("top_k", request.web_search_top_k),
+            )
+            web_results = web_result.get("results", [])
+            await _emit_event(events, event_handler, "web_search_completed", {
+                "trace_id": trace_id,
+                "result_count": len(web_results),
+                "success": web_result.get("success", False),
+                "error": web_result.get("error", ""),
+                "provider_used": web_result.get("provider_used", ""),
+                "fallback_used": web_result.get("fallback_used", False),
+                "fallback_reason": web_result.get("fallback_reason", ""),
+            })
+
+            if web_results:
+                web_context = InternetSearchService.build_context(web_results)
+                answer_prompt = (
+                    "Answer the user query using these web search results. "
+                    "If uncertain, acknowledge uncertainty and cite likely sources.\n\n"
+                    f"User query: {request.query}\n\n"
+                    f"Web results:\n{web_context}\n\n"
+                    "Answer:"
+                )
+                try:
+                    answer = router_service._call_llm(answer_prompt)
+                except Exception:
+                    answer = web_results[0].get("snippet", "Web results found but answer synthesis failed.")
+            else:
+                fallback_error = web_result.get("error", "No internet results found.")
+                answer = f"Unable to find useful web results. {fallback_error}"
+
+            response_payload = {
+                "success": True,
+                "trace_id": trace_id,
+                "agent": "internet_search",
+                "answer": answer,
+                "web_results": web_results[:10],
+                "web_provider": web_result.get("provider_used", "none"),
+                "web_fallback_used": web_result.get("fallback_used", False),
+                "web_fallback_reason": web_result.get("fallback_reason", ""),
+                "routing": routing_info,
+            }
+            await _emit_event(events, event_handler, "agent_completed", {
+                "trace_id": trace_id,
+                "agent": "internet_search",
+            })
+            await _emit_event(events, event_handler, "final_response", {
+                "trace_id": trace_id,
+                "agent": "internet_search",
+                "response": response_payload,
+            })
+        elif route_type == "general_llm":
             await _emit_event(events, event_handler, "agent_started", {
                 "trace_id": trace_id,
                 "agent": "general_llm",

@@ -20,13 +20,19 @@ Set environment variables:
 # macOS/Linux
 export LLM_SERVER="http://localhost:1234"
 export LLM_MODEL="qwen-3.5-vl-9b"
+export SERPAPI_KEY="your_serpapi_key"
+export TAVILY_API_KEY="your_tavily_api_key"
 ```
 
 ```powershell
 # Windows PowerShell
 $env:LLM_SERVER="http://localhost:1234"
 $env:LLM_MODEL="qwen-3.5-vl-9b"
+$env:SERPAPI_KEY="your_serpapi_key"
+$env:TAVILY_API_KEY="your_tavily_api_key"
 ```
+
+`.env` is auto-loaded by the backend, so you can also place keys in `./.env`.
 
 ### Step 3: Start Backend (1 min)
 
@@ -67,6 +73,7 @@ You should see:
    - "Summarize all documents"
    - "Summarize `<document name>`"
    - "Summarize chapter 3 of `<document name>`"
+   - "latest AI news" (auto internet search route)
 4. Watch route + timeline + persisted history
 
 ## 📚 Full Setup with One Command
@@ -276,8 +283,14 @@ Use environment variables:
 ```bash
 LLM_SERVER=http://localhost:1234
 LLM_MODEL=qwen-3.5-vl-9b
+SERPAPI_KEY=your_serpapi_key
+TAVILY_API_KEY=your_tavily_api_key
 BACKEND_API_URL=http://localhost:8000/api/agents
 ```
+
+Web search fallback order:
+1. SerpAPI
+2. Tavily (automatic fallback on SerpAPI failure/empty results)
 
 ## 💡 Pro Tips
 

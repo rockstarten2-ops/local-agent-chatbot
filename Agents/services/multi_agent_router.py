@@ -19,6 +19,11 @@ class MultiAgentRouter:
             "all documents", "all docs", "across documents",
             "everything", "entire set", "all files"
         ]
+        self.web_keywords = [
+            "latest", "today", "current", "news", "online", "internet",
+            "web", "google", "what happened", "recent", "trend", "update",
+            "stock price", "weather", "live"
+        ]
 
     @staticmethod
     def _tokenize_words(text: str) -> List[str]:
@@ -74,10 +79,34 @@ class MultiAgentRouter:
             },
         }
 
-    def route_query(self, query: str, document_names: List[str], has_documents: bool) -> Dict[str, Any]:
+    def route_query(
+        self,
+        query: str,
+        document_names: List[str],
+        has_documents: bool,
+        force_web_search: bool = False,
+        web_search_top_k: int = 5,
+    ) -> Dict[str, Any]:
         """Route query to an execution plan with structured metadata."""
         steps: List[Dict[str, str]] = []
         steps.append({"step": "query_received", "description": "Received user query"})
+        safe_web_top_k = max(1, min(int(web_search_top_k), 10))
+
+        if force_web_search:
+            steps.append({"step": "routing_decision", "description": "Forced internet search from UI toggle"})
+            return {
+                "agent": "internet_search",
+                "route_type": "internet_search",
+                "reason": "Forced web search from UI",
+                "should_search": True,
+                "search_strategy": "internet_search",
+                "top_k": safe_web_top_k,
+                "relevance": {"is_relevant": False, "confidence": 1.0, "reason": "Forced web route"},
+                "confidence": 1.0,
+                "target_documents": [],
+                "target_chapters": [],
+                "steps": steps,
+            }
 
         relevance = self.check_query_relevance(query, document_names)
         steps.append({
@@ -85,7 +114,25 @@ class MultiAgentRouter:
             "description": f"Relevance={relevance['confidence']:.2f} ({relevance['reason']})"
         })
 
+        query_lower = query.lower()
+        has_web_keyword = any(keyword in query_lower for keyword in self.web_keywords)
+
         if not has_documents:
+            if has_web_keyword:
+                steps.append({"step": "routing_decision", "description": "No documents and web-intent query, route to internet search"})
+                return {
+                    "agent": "internet_search",
+                    "route_type": "internet_search",
+                    "reason": "No documents available, using internet search",
+                    "should_search": True,
+                    "search_strategy": "internet_search",
+                    "top_k": safe_web_top_k,
+                    "relevance": relevance,
+                    "confidence": max(relevance["confidence"], 0.75),
+                    "target_documents": [],
+                    "target_chapters": [],
+                    "steps": steps,
+                }
             steps.append({"step": "routing_decision", "description": "No documents available, route to general LLM"})
             return {
                 "agent": "general_llm",
@@ -101,6 +148,21 @@ class MultiAgentRouter:
             }
 
         if has_documents and not relevance["is_relevant"]:
+            if has_web_keyword:
+                steps.append({"step": "routing_decision", "description": "Query not document-relevant and web-intent detected, route to internet search"})
+                return {
+                    "agent": "internet_search",
+                    "route_type": "internet_search",
+                    "reason": "Query appears out-of-corpus, using internet search",
+                    "should_search": True,
+                    "search_strategy": "internet_search",
+                    "top_k": safe_web_top_k,
+                    "relevance": relevance,
+                    "confidence": max(relevance["confidence"], 0.7),
+                    "target_documents": [],
+                    "target_chapters": [],
+                    "steps": steps,
+                }
             steps.append({"step": "routing_decision", "description": "Query not document-relevant, route to general LLM"})
             return {
                 "agent": "general_llm",

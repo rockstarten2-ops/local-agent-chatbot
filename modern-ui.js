@@ -22,6 +22,7 @@ const routeBadge = document.getElementById("route-badge");
 const timelineList = document.getElementById("timeline-list");
 const historyList = document.getElementById("history-list");
 const inputLockMessage = document.getElementById("input-lock-message");
+const forceWebToggle = document.getElementById("force-web-toggle");
 const attachmentChips = document.getElementById("attachment-chips");
 const processingAnimation = document.getElementById("processing-animation");
 const processingText = document.getElementById("processing-text");
@@ -313,10 +314,16 @@ async function processQuery(query) {
 }
 
 async function streamQuery(query) {
+    const forceWebSearch = Boolean(forceWebToggle?.checked);
     const response = await fetch(`${API_BASE_URL}/query/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query, use_llm: true }),
+        body: JSON.stringify({
+            query,
+            use_llm: true,
+            force_web_search: forceWebSearch,
+            web_search_top_k: 6,
+        }),
     });
     if (!response.ok) throw new Error(`Stream request failed: ${response.statusText}`);
     if (!response.body) throw new Error("Streaming is not supported by this browser");
@@ -397,6 +404,8 @@ function summarizeEventPayload(eventName, payload) {
     if (eventName === "chapter_resolution") return `${payload.document || "Document"} | ${payload.mode || "resolved"} | chunks: ${payload.matched_chunks || 0}`;
     if (eventName === "retrieval_completed") return `${payload.document || "Document"} | ${payload.result_count || 0} chunks`;
     if (eventName === "summary_partial") return `${payload.document || "Document"} partial summary`;
+    if (eventName === "web_search_started") return `Running web search for "${payload.query || ""}"`;
+    if (eventName === "web_search_completed") return `Web search complete | ${payload.result_count || 0} results`;
     if (eventName === "agent_started") return `${friendlyRouteName(payload.agent || "agent")} started`;
     if (eventName === "error") return payload.message || "Error";
     return payload.document || payload.message || "processing";
@@ -406,6 +415,7 @@ function renderFlowStepper(events) {
     const steps = [
         { key: "query_received", label: "query received" },
         { key: "routing_decision", label: "routing decision" },
+        { key: "web_search_completed", label: "web search" },
         { key: "agent_started", label: "agent execution" },
         { key: "final_response", label: "response completion" },
     ];
@@ -434,6 +444,8 @@ function formatFinalResponse(data) {
         });
     } else if (data.agent === "document_retriever") {
         message = data.answer || "";
+    } else if (data.agent === "internet_search") {
+        message = data.answer || "";
     } else {
         message = data.answer || "Completed.";
     }
@@ -452,6 +464,7 @@ function formatFinalResponse(data) {
             routing: data.routing || {},
             events: activeTrace.events,
             results: data.results || [],
+            webResults: data.web_results || [],
             summaries: data.summaries || [],
         },
     };
@@ -481,6 +494,9 @@ function addMessage(role, content, metadata = {}) {
 
         if (Array.isArray(metadata.results) && metadata.results.length > 0) {
             contentEl.appendChild(renderSourceCards(metadata.results));
+        }
+        if (Array.isArray(metadata.webResults) && metadata.webResults.length > 0) {
+            contentEl.appendChild(renderWebSources(metadata.webResults));
         }
 
         if (Array.isArray(metadata.events) && metadata.events.length > 0) {
@@ -537,6 +553,35 @@ function renderTraceDrawer(metadata) {
     return details;
 }
 
+function renderWebSources(results) {
+    const details = document.createElement("details");
+    details.className = "web-sources";
+    details.innerHTML = `<summary>Web sources (${results.length})</summary>`;
+    const list = document.createElement("div");
+    list.className = "web-source-list";
+
+    results.slice(0, 8).forEach((result) => {
+        const item = document.createElement("div");
+        item.className = "web-source-item";
+        const title = escapeHTML(result.title || "Untitled");
+        const url = escapeHTML(result.url || "");
+        const source = escapeHTML(result.source || "");
+        const snippet = escapeHTML((result.snippet || "").slice(0, 320));
+        item.innerHTML = `
+            <div class="web-source-head">
+                <a class="web-source-title" href="${url}" target="_blank" rel="noopener noreferrer">${title}</a>
+                <span>#${result.rank || "-"}</span>
+            </div>
+            <div class="web-source-url">${source}</div>
+            <div class="web-source-snippet">${snippet}${snippet.length >= 320 ? "..." : ""}</div>
+        `;
+        list.appendChild(item);
+    });
+
+    details.appendChild(list);
+    return details;
+}
+
 async function loadHistory() {
     try {
         const response = await fetch(`${API_BASE_URL}/history?limit=40`);
@@ -586,10 +631,12 @@ function showHistoryRunSummary(traceId) {
     }
     const route = item.routing?.route_type || item.response?.agent || "unknown";
     const events = Array.isArray(item.events) ? item.events : [];
+    const webResultCount = Array.isArray(item.response?.web_results) ? item.response.web_results.length : 0;
     activeRunSummary.innerHTML = `
         <div class="active-run-summary-item"><strong>Query</strong><br>${escapeHTML(item.query || "")}</div>
         <div class="active-run-summary-item"><strong>Route</strong><br>${escapeHTML(friendlyRouteName(route))}</div>
         <div class="active-run-summary-item"><strong>Events</strong><br>${events.length}</div>
+        <div class="active-run-summary-item"><strong>Web Results</strong><br>${webResultCount}</div>
         <div class="active-run-summary-item"><strong>Completed</strong><br>${escapeHTML(item.completed_at || "N/A")}</div>
     `;
 }
@@ -625,6 +672,7 @@ function friendlyRouteName(routeType) {
     const map = {
         general_llm: "General LLM",
         document_retriever: "Document Retriever",
+        internet_search: "Internet Search",
         all_documents_summary: "All Documents Summarizer",
         single_document_summary: "Single Document Summarizer",
         chapter_summary: "Chapter Summarizer",

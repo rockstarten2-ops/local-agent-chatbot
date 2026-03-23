@@ -65,13 +65,19 @@ Set environment variables before starting the app:
 # macOS/Linux
 export LLM_SERVER="http://localhost:1234"
 export LLM_MODEL="qwen-3.5-vl-9b"
+export SERPAPI_KEY="your_serpapi_key"
+export TAVILY_API_KEY="your_tavily_api_key"
 ```
 
 ```powershell
 # Windows PowerShell
 $env:LLM_SERVER="http://localhost:1234"
 $env:LLM_MODEL="qwen-3.5-vl-9b"
+$env:SERPAPI_KEY="your_serpapi_key"
+$env:TAVILY_API_KEY="your_tavily_api_key"
 ```
+
+The backend now auto-loads environment variables from `.env` at startup.
 
 ### 3. Start the Backend API
 
@@ -148,6 +154,9 @@ The Streamlit UI will be available at: http://localhost:8501
 - `POST /api/agents/query` - Multi-agent query (JSON response)
 - `POST /api/agents/query/stream` - Multi-agent query (SSE realtime events)
 - `GET /api/agents/history` - Recent multi-agent traces and outputs
+  - Request supports:
+    - `force_web_search` (bool): forces internet search agent route
+    - `web_search_top_k` (int): number of web results to retrieve
 
 ### System
 
@@ -210,10 +219,19 @@ Set these environment variables to customize runtime configuration:
 ```bash
 LLM_SERVER=http://localhost:1234
 LLM_MODEL=qwen-3.5-vl-9b
+SERPAPI_KEY=your_serpapi_key
+SERPAPI_BASE_URL=https://serpapi.com/search.json
+TAVILY_API_KEY=your_tavily_api_key
+TAVILY_BASE_URL=https://api.tavily.com/search
+WEB_SEARCH_TIMEOUT=15
 BACKEND_API_URL=http://localhost:8000/api/agents  # Streamlit client only
 API_HOST=0.0.0.0
 API_PORT=8000
 ```
+
+Internet search provider behavior:
+- Primary: SerpAPI
+- Fallback: Tavily (automatically used when SerpAPI errors, quota exhaustion, or empty results)
 
 ## 📊 Performance Tips
 
