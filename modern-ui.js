@@ -1,5 +1,6 @@
 const API_BASE_URL = "http://localhost:8000/api/agents";
 const PENDING_UPLOADS_STORAGE_KEY = "localAgentPendingUploads";
+const CHAT_HISTORY_STORAGE_KEY = "localAgentChatHistory";
 
 let documents = {};
 let conversationHistory = [];
@@ -18,11 +19,13 @@ const fileInput = document.getElementById("file-input");
 const plusUploadBtn = document.getElementById("plus-upload-btn");
 const documentsList = document.getElementById("documents-list");
 const clearAllBtn = document.getElementById("clear-all-btn");
+const clearChatBtn = document.getElementById("clear-chat-btn");
 const routeBadge = document.getElementById("route-badge");
 const timelineList = document.getElementById("timeline-list");
 const historyList = document.getElementById("history-list");
 const inputLockMessage = document.getElementById("input-lock-message");
 const forceWebToggle = document.getElementById("force-web-toggle");
+const webProviderSelect = document.getElementById("web-provider-select");
 const attachmentChips = document.getElementById("attachment-chips");
 const processingAnimation = document.getElementById("processing-animation");
 const processingText = document.getElementById("processing-text");
@@ -39,6 +42,7 @@ const processingDocs = document.getElementById("processing-docs");
 
 document.addEventListener("DOMContentLoaded", () => {
     setupEventListeners();
+    restoreChatHistory();
     restorePendingUploads();
     loadDocuments();
     loadHistory();
@@ -62,6 +66,7 @@ function setupEventListeners() {
     plusUploadBtn.addEventListener("click", () => fileInput.click());
     fileInput.addEventListener("change", handleFileSelect);
     clearAllBtn.addEventListener("click", clearAllDocuments);
+    clearChatBtn.addEventListener("click", clearAllChat);
 }
 
 async function loadDocuments() {
@@ -241,6 +246,7 @@ async function clearAllDocuments() {
         documents = {};
         attachments = [];
         conversationHistory = [];
+        persistChatHistory();
         persistPendingUploads();
         renderAttachmentChips();
         renderDocuments();
@@ -251,6 +257,14 @@ async function clearAllDocuments() {
     } catch (error) {
         addMessage("assistant", `Clear failed: ${error.message}`);
     }
+}
+
+function clearAllChat() {
+    if (!confirm("Clear all chat messages?")) return;
+    conversationHistory = [];
+    persistChatHistory();
+    chatMessages.innerHTML = "";
+    resetTracePanels();
 }
 
 async function sendMessage() {
@@ -315,6 +329,7 @@ async function processQuery(query) {
 
 async function streamQuery(query) {
     const forceWebSearch = Boolean(forceWebToggle?.checked);
+    const webSearchProvider = (webProviderSelect?.value || "auto").toLowerCase();
     const response = await fetch(`${API_BASE_URL}/query/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -323,6 +338,7 @@ async function streamQuery(query) {
             use_llm: true,
             force_web_search: forceWebSearch,
             web_search_top_k: 6,
+            web_search_provider: webSearchProvider,
         }),
     });
     if (!response.ok) throw new Error(`Stream request failed: ${response.statusText}`);
@@ -404,8 +420,14 @@ function summarizeEventPayload(eventName, payload) {
     if (eventName === "chapter_resolution") return `${payload.document || "Document"} | ${payload.mode || "resolved"} | chunks: ${payload.matched_chunks || 0}`;
     if (eventName === "retrieval_completed") return `${payload.document || "Document"} | ${payload.result_count || 0} chunks`;
     if (eventName === "summary_partial") return `${payload.document || "Document"} partial summary`;
-    if (eventName === "web_search_started") return `Running web search for "${payload.query || ""}"`;
-    if (eventName === "web_search_completed") return `Web search complete | ${payload.result_count || 0} results`;
+    if (eventName === "web_search_started") {
+        const provider = payload.provider_preference ? ` [${payload.provider_preference}]` : "";
+        return `Running web search${provider} for "${payload.query || ""}"`;
+    }
+    if (eventName === "web_search_completed") {
+        const provider = payload.provider_used ? ` via ${payload.provider_used}` : "";
+        return `Web search complete${provider} | ${payload.result_count || 0} results`;
+    }
     if (eventName === "agent_started") return `${friendlyRouteName(payload.agent || "agent")} started`;
     if (eventName === "error") return payload.message || "Error";
     return payload.document || payload.message || "processing";
@@ -465,6 +487,9 @@ function formatFinalResponse(data) {
             events: activeTrace.events,
             results: data.results || [],
             webResults: data.web_results || [],
+            webProvider: data.web_provider || data.web_provider_used || "",
+            webProviderUsed: data.web_provider_used || data.web_provider || "",
+            webFallbackUsed: Boolean(data.web_fallback_used),
             summaries: data.summaries || [],
         },
     };
@@ -489,6 +514,8 @@ function addMessage(role, content, metadata = {}) {
         const routeType = metadata.routeType || metadata.agent;
         if (routeType) metadataRow.innerHTML += `<span class="meta-chip">Agent: ${escapeHTML(friendlyRouteName(routeType))}</span>`;
         if (metadata.routeReason) metadataRow.innerHTML += `<span class="meta-chip">${escapeHTML(metadata.routeReason)}</span>`;
+        if (metadata.webProviderUsed) metadataRow.innerHTML += `<span class="meta-chip">Web: ${escapeHTML(metadata.webProviderUsed)}</span>`;
+        if (metadata.webFallbackUsed) metadataRow.innerHTML += `<span class="meta-chip">Fallback used</span>`;
         if (metadata.traceId) metadataRow.innerHTML += `<span class="meta-chip">Trace: ${escapeHTML(metadata.traceId.slice(0, 8))}</span>`;
         if (metadataRow.innerHTML) contentEl.appendChild(metadataRow);
 
@@ -507,6 +534,7 @@ function addMessage(role, content, metadata = {}) {
     chatMessages.appendChild(messageDiv);
     chatMessages.scrollTop = chatMessages.scrollHeight;
     conversationHistory.push({ role, content, metadata });
+    persistChatHistory();
 }
 
 function renderSourceCards(results) {
@@ -698,6 +726,35 @@ function escapeHTML(text) {
 
 function wait(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function persistChatHistory() {
+    try {
+        // Keep recent messages only to avoid unbounded storage growth.
+        const recentMessages = conversationHistory.slice(-120);
+        sessionStorage.setItem(CHAT_HISTORY_STORAGE_KEY, JSON.stringify(recentMessages));
+    } catch {
+        // Ignore storage issues.
+    }
+}
+
+function restoreChatHistory() {
+    try {
+        const raw = sessionStorage.getItem(CHAT_HISTORY_STORAGE_KEY);
+        if (!raw) return;
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed) || parsed.length === 0) return;
+
+        conversationHistory = [];
+        chatMessages.innerHTML = "";
+        parsed.forEach((entry) => {
+            if (entry && typeof entry.role === "string" && typeof entry.content === "string") {
+                addMessage(entry.role, entry.content, entry.metadata || {});
+            }
+        });
+    } catch {
+        // Ignore parse errors and continue with empty chat.
+    }
 }
 
 function persistPendingUploads() {

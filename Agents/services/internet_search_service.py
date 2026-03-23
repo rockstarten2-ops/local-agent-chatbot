@@ -18,9 +18,46 @@ class InternetSearchService:
     """Performs internet search and returns normalized results."""
 
     @staticmethod
-    def search(query: str, top_k: int = 5) -> Dict[str, Any]:
-        """Search with SerpAPI first, then fallback to Tavily."""
+    def search(query: str, top_k: int = 5, preferred_provider: str = "auto") -> Dict[str, Any]:
+        """Search with explicit provider or auto failover."""
         safe_top_k = max(1, min(int(top_k), 10))
+        provider = (preferred_provider or "auto").strip().lower()
+
+        if provider == "serpapi":
+            serp_result = InternetSearchService._search_serpapi(query, safe_top_k)
+            if serp_result["success"] and serp_result["results"]:
+                return {
+                    **serp_result,
+                    "provider": "serpapi",
+                    "provider_used": "serpapi",
+                    "fallback_used": False,
+                    "fallback_reason": "",
+                }
+            return {
+                **serp_result,
+                "provider": "serpapi",
+                "provider_used": "serpapi",
+                "fallback_used": False,
+                "fallback_reason": "",
+            }
+
+        if provider == "tavily":
+            tavily_result = InternetSearchService._search_tavily(query, safe_top_k)
+            if tavily_result["success"] and tavily_result["results"]:
+                return {
+                    **tavily_result,
+                    "provider": "tavily",
+                    "provider_used": "tavily",
+                    "fallback_used": False,
+                    "fallback_reason": "",
+                }
+            return {
+                **tavily_result,
+                "provider": "tavily",
+                "provider_used": "tavily",
+                "fallback_used": False,
+                "fallback_reason": "",
+            }
 
         serp_result = InternetSearchService._search_serpapi(query, safe_top_k)
         if serp_result["success"] and serp_result["results"]:

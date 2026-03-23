@@ -48,6 +48,7 @@
                         <span class="route-agent">Waiting</span>
                         <span class="route-reason">No query running</span>
                     </div>
+                    <button type="button" id="clear-chat-btn" class="clear-chat-btn">Clear chat</button>
                 </div>
 
                 <div id="chat-messages" class="chat-messages">
@@ -72,6 +73,14 @@
                     <label class="web-toggle">
                         <input type="checkbox" id="force-web-toggle">
                         <span>Force web search</span>
+                    </label>
+                    <label class="web-provider">
+                        <span>Provider</span>
+                        <select id="web-provider-select">
+                            <option value="auto">Auto (SerpAPI -> Tavily)</option>
+                            <option value="serpapi">SerpAPI</option>
+                            <option value="tavily">Tavily</option>
+                        </select>
                     </label>
                     <p id="input-lock-message" class="input-lock-message" style="display: none;">
                         Files are uploading/chunking. Chat input is temporarily disabled.

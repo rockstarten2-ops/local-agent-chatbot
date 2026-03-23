@@ -180,6 +180,7 @@ class MultiAgentQuery(BaseModel):
     use_llm: bool = True
     force_web_search: bool = False
     web_search_top_k: int = 5
+    web_search_provider: str = "auto"
 
 
 def _utc_now_iso() -> str:
@@ -279,17 +280,19 @@ async def _execute_multi_agent_query(
             await _emit_event(events, event_handler, "agent_started", {
                 "trace_id": trace_id,
                 "agent": "internet_search",
-                "message": "Searching the internet with SerpAPI",
+                "message": "Searching the internet",
             })
             await _emit_event(events, event_handler, "web_search_started", {
                 "trace_id": trace_id,
                 "query": request.query,
                 "top_k": routing_info.get("top_k", request.web_search_top_k),
+                "provider_preference": request.web_search_provider,
             })
 
             web_result = InternetSearchService.search(
                 request.query,
                 top_k=routing_info.get("top_k", request.web_search_top_k),
+                preferred_provider=request.web_search_provider,
             )
             web_results = web_result.get("results", [])
             await _emit_event(events, event_handler, "web_search_completed", {

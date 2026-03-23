@@ -115,24 +115,19 @@ class MultiAgentRouter:
         })
 
         query_lower = query.lower()
-        has_web_keyword = any(keyword in query_lower for keyword in self.web_keywords)
+        doc_reference_keywords = [
+            "document", "doc", "file", "pdf", "upload", "uploaded",
+            "filename", "file name", "name", "name of", "title", "chapter", "section",
+            "this", "that", "it",
+        ]
+        chit_chat_keywords = [
+            "hello", "hi", "hey", "thanks", "thank you", "how are you",
+            "who are you", "your name",
+        ]
+        has_doc_reference = any(keyword in query_lower for keyword in doc_reference_keywords)
+        is_chit_chat = any(keyword in query_lower for keyword in chit_chat_keywords)
 
         if not has_documents:
-            if has_web_keyword:
-                steps.append({"step": "routing_decision", "description": "No documents and web-intent query, route to internet search"})
-                return {
-                    "agent": "internet_search",
-                    "route_type": "internet_search",
-                    "reason": "No documents available, using internet search",
-                    "should_search": True,
-                    "search_strategy": "internet_search",
-                    "top_k": safe_web_top_k,
-                    "relevance": relevance,
-                    "confidence": max(relevance["confidence"], 0.75),
-                    "target_documents": [],
-                    "target_chapters": [],
-                    "steps": steps,
-                }
             steps.append({"step": "routing_decision", "description": "No documents available, route to general LLM"})
             return {
                 "agent": "general_llm",
@@ -148,17 +143,20 @@ class MultiAgentRouter:
             }
 
         if has_documents and not relevance["is_relevant"]:
-            if has_web_keyword:
-                steps.append({"step": "routing_decision", "description": "Query not document-relevant and web-intent detected, route to internet search"})
+            if has_doc_reference and not is_chit_chat:
+                steps.append({
+                    "step": "routing_decision",
+                    "description": "Low lexical match but document-reference detected, route to document retriever"
+                })
                 return {
-                    "agent": "internet_search",
-                    "route_type": "internet_search",
-                    "reason": "Query appears out-of-corpus, using internet search",
+                    "agent": "document_retriever",
+                    "route_type": "document_retriever",
+                    "reason": "Follow-up appears to reference uploaded documents",
                     "should_search": True,
-                    "search_strategy": "internet_search",
-                    "top_k": safe_web_top_k,
+                    "search_strategy": "topic_search",
+                    "top_k": 5,
                     "relevance": relevance,
-                    "confidence": max(relevance["confidence"], 0.7),
+                    "confidence": max(relevance["confidence"], 0.45),
                     "target_documents": [],
                     "target_chapters": [],
                     "steps": steps,

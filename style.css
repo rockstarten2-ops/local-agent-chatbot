@@ -661,6 +661,10 @@ html, body {
 
 .chat-toolbar {
     padding: 0.7rem 0.8rem 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
 }
 
 .route-badge {
@@ -674,6 +678,17 @@ html, body {
 
 .route-reason {
     color: var(--dark-muted);
+}
+
+.clear-chat-btn {
+    border: 1px solid #4a4a4a;
+    border-radius: 10px;
+    background: #343434;
+    color: #d8d8d8;
+    font-size: 0.74rem;
+    padding: 0.35rem 0.55rem;
+    cursor: pointer;
+    white-space: nowrap;
 }
 
 .chat-messages {
@@ -747,6 +762,25 @@ html, body {
     margin-bottom: 0.45rem;
     font-size: 0.74rem;
     color: var(--dark-muted);
+}
+
+.web-provider {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    margin-left: 0.65rem;
+    margin-bottom: 0.45rem;
+    font-size: 0.74rem;
+    color: var(--dark-muted);
+}
+
+.web-provider select {
+    border: 1px solid #4a4a4a;
+    border-radius: 8px;
+    background: #2f2f2f;
+    color: #e5e7eb;
+    font-size: 0.72rem;
+    padding: 0.2rem 0.35rem;
 }
 
 .web-toggle input {
