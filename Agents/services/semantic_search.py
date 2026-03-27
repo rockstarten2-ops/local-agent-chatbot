@@ -2,8 +2,9 @@
 import requests
 import json
 from typing import List, Dict, Any
-from Agents.config import LLM_API_ENDPOINT, LLM_MODEL
+from Agents.config import LLM_API_ENDPOINT, LLM_MODEL, LLM_TIMEOUT, LLM_MAX_TOKENS
 from Agents.services.chroma_vector_store import get_vector_store
+from Agents.services.llm_response_parser import extract_chat_completion_text
 
 class SemanticSearchAgent:
     """Agent for semantic search and LLM-based Q&A."""
@@ -80,14 +81,14 @@ Answer:"""
                         {"role": "user", "content": prompt}
                     ],
                     "temperature": 0.7,
-                    "max_tokens": 512,
+                    "max_tokens": LLM_MAX_TOKENS,
                 },
-                timeout=30
+                timeout=LLM_TIMEOUT
             )
             
             response.raise_for_status()
             data = response.json()
-            return data["choices"][0]["message"]["content"]
+            return extract_chat_completion_text(data)
             
         except Exception as e:
             return f"Error generating response: {str(e)}"

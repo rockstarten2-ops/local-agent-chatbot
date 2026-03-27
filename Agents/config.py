@@ -20,7 +20,8 @@ CHROMA_DB_DIR.mkdir(parents=True, exist_ok=True)
 LLM_SERVER_URL = os.getenv("LLM_SERVER", "http://localhost:1234")
 LLM_API_ENDPOINT = f"{LLM_SERVER_URL}/v1/chat/completions"
 LLM_MODEL = os.getenv("LLM_MODEL", "local-model")
-LLM_TIMEOUT = 10  # seconds
+LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", "60"))  # seconds
+LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "1024"))
 
 # Internet Search Configuration
 SERPAPI_KEY = os.getenv("SERPAPI_KEY", "")

@@ -2,8 +2,9 @@
 import re
 import requests
 from typing import Dict, Any, List
-from Agents.config import LLM_SERVER_URL, LLM_MODEL, LLM_TIMEOUT
+from Agents.config import LLM_SERVER_URL, LLM_MODEL, LLM_TIMEOUT, LLM_MAX_TOKENS
 from Agents.services.document_parsers import extract_chapter_targets, find_best_document_match
+from Agents.services.llm_response_parser import extract_chat_completion_text
 
 class MultiAgentRouter:
     """Routes queries to appropriate agents based on relevance and intent."""
@@ -251,13 +252,13 @@ class MultiAgentRouter:
                         {"role": "user", "content": prompt}
                     ],
                     "temperature": 0.3,
-                    "max_tokens": 400,
+                    "max_tokens": LLM_MAX_TOKENS,
                 },
                 timeout=LLM_TIMEOUT
             )
             response.raise_for_status()
             data = response.json()
-            return data["choices"][0]["message"]["content"]
+            return extract_chat_completion_text(data)
         except Exception as e:
             raise Exception(f"LLM call failed: {str(e)}")
 

@@ -4,10 +4,13 @@ import json
 import os
 from datetime import datetime
 from pathlib import Path
+from Agents.services.llm_response_parser import extract_chat_completion_text
 
 # Configuration
 LLM_SERVER_URL = os.getenv("LLM_SERVER", "http://localhost:1234")
 LLM_MODEL = os.getenv("LLM_MODEL", "local-model")
+LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", "60"))
+LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "1024"))
 BACKEND_API_URL = os.getenv("BACKEND_API_URL", "http://localhost:8000/api/agents")
 
 # Initialize session state FIRST - required by Streamlit before page config
@@ -40,14 +43,14 @@ Answer:"""
                     {"role": "user", "content": prompt}
                 ],
                 "temperature": 0.7,
-                "max_tokens": 512,
+                "max_tokens": LLM_MAX_TOKENS,
             },
-            timeout=30
+            timeout=LLM_TIMEOUT
         )
         
         response.raise_for_status()
         data = response.json()
-        return data["choices"][0]["message"]["content"]
+        return extract_chat_completion_text(data)
         
     except Exception as e:
         return f"⚠️ Could not generate AI response: {str(e)}"

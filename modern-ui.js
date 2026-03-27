@@ -33,6 +33,7 @@ const agentProcessing = document.getElementById("agent-processing-indicator");
 const indicatorAgent = document.getElementById("indicator-agent");
 const indicatorAction = document.getElementById("indicator-action");
 const flowStepper = document.getElementById("flow-stepper");
+const liveStepIndicator = document.getElementById("live-step-indicator");
 const activeRunSummary = document.getElementById("active-run-summary");
 const uploadProgress = document.getElementById("upload-progress");
 const uploadStatus = document.getElementById("upload-status");
@@ -405,14 +406,45 @@ function handleStreamEvent(eventName, eventEnvelope) {
 
 function appendTimelineEvent(eventName, payload) {
     if (timelineList.querySelector(".empty-state")) timelineList.innerHTML = "";
+    timelineList.querySelectorAll(".timeline-item").forEach((node) => node.classList.remove("is-current"));
+
+    const eventState = classifyEventState(eventName);
     const item = document.createElement("div");
-    item.className = "timeline-item";
+    item.className = `timeline-item state-${eventState}`;
+    if (eventState === "running") item.classList.add("is-current");
     item.innerHTML = `
         <div class="timeline-item-title">${escapeHTML(eventName.replace(/_/g, " "))}</div>
         <div class="timeline-item-body">${escapeHTML(summarizeEventPayload(eventName, payload))}</div>
     `;
     timelineList.appendChild(item);
     timelineList.scrollTop = timelineList.scrollHeight;
+
+    if (liveStepIndicator) {
+        if (eventName === "final_response") {
+            liveStepIndicator.textContent = "Run complete.";
+            liveStepIndicator.className = "live-step-indicator state-done";
+        } else if (eventName === "error") {
+            liveStepIndicator.textContent = `Error: ${payload.message || "Unknown issue"}`;
+            liveStepIndicator.className = "live-step-indicator state-error";
+        } else {
+            liveStepIndicator.textContent = `Running: ${eventName.replace(/_/g, " ")}`;
+            liveStepIndicator.className = "live-step-indicator state-running";
+        }
+    }
+}
+
+function classifyEventState(eventName) {
+    if (eventName === "error") return "error";
+    if (["query_received", "routing_decision", "agent_started", "web_search_started"].includes(eventName)) return "running";
+    if ([
+        "retrieval_completed",
+        "summary_partial",
+        "chapter_resolution",
+        "agent_completed",
+        "web_search_completed",
+        "final_response",
+    ].includes(eventName)) return "done";
+    return "info";
 }
 
 function summarizeEventPayload(eventName, payload) {
@@ -434,6 +466,7 @@ function summarizeEventPayload(eventName, payload) {
 }
 
 function renderFlowStepper(events) {
+    if (!flowStepper) return;
     const steps = [
         { key: "query_received", label: "query received" },
         { key: "routing_decision", label: "routing decision" },
@@ -677,6 +710,10 @@ function updateRouteBadge(routeType, reason) {
 function resetTracePanels() {
     activeTrace = { traceId: null, events: [] };
     timelineList.innerHTML = '<p class="empty-state">Run a query to see live flow</p>';
+    if (liveStepIndicator) {
+        liveStepIndicator.textContent = "Waiting for a query...";
+        liveStepIndicator.className = "live-step-indicator";
+    }
     updateRouteBadge("general_llm", "Waiting for query");
     renderFlowStepper([]);
     activeRunSummary.innerHTML = '<p class="empty-state">No run selected.</p>';
